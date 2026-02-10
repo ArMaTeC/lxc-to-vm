@@ -1,0 +1,47 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: [main]
+    paths: ['**.sh']
+  pull_request:
+    branches: [main]
+    paths: ['**.sh']
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: Lint Shell Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck
+        run: |
+          echo "::group::ShellCheck version"
+          shellcheck --version
+          echo "::endgroup::"
+          # Find all .sh files and run ShellCheck
+          find . -name '*.sh' -type f -print0 | xargs -0 shellcheck --severity=warning --shell=bash
+          echo "All scripts passed ShellCheck."
+
+  syntax-check:
+    name: Bash Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check bash syntax
+        run: |
+          for script in $(find . -name '*.sh' -type f); do
+            echo "Checking syntax: $script"
+            bash -n "$script"
+          done
+          echo "All scripts have valid syntax."
