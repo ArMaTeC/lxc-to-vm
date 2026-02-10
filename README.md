@@ -1,6 +1,5 @@
 # Proxmox LXC to VM Converter
 
-[![ShellCheck](https://github.com/ArMaTeC/lxc-to-vm/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/ArMaTeC/lxc-to-vm/actions/workflows/shellcheck.yml)
 [![Release](https://github.com/ArMaTeC/lxc-to-vm/actions/workflows/release.yml/badge.svg)](https://github.com/ArMaTeC/lxc-to-vm/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -301,8 +300,6 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 3. Commit your changes: `git commit -m 'Add my feature'`
 4. Push to the branch: `git push origin feature/my-feature`
 5. Open a Pull Request
-
-All shell scripts must pass [ShellCheck](https://www.shellcheck.net/) with no errors.
 
 ---
 
