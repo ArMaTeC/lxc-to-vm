@@ -1313,12 +1313,7 @@ DEFAULT_WORK_BASE="/var/lib/vz/dump"
 # ==============================================================================
 
 do_conversion() {
-# All the conversion logic goes inside this function
-
-
-check_space() {
-    local dir="$1"
-    local avail_mb
+    # No arguments needed — uses global vars set by argument parsing or wizard
     avail_mb=$(df -BM --output=avail "$dir" 2>/dev/null | tail -1 | tr -d ' M')
     echo "${avail_mb:-0}"
 }
