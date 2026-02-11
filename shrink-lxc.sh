@@ -180,10 +180,17 @@ else
 fi
 
 USED_GB=$(( (USED_MB + 1023) / 1024 ))  # Round up to nearest GB
-NEW_SIZE_GB=$(( USED_GB + HEADROOM_GB ))
 
-# Ensure minimum 1GB
-[[ "$NEW_SIZE_GB" -lt 1 ]] && NEW_SIZE_GB=1
+# Add filesystem metadata margin: 5% of used space or 512MB, whichever is greater
+# resize2fs needs room for journal, inodes, superblocks, and block group descriptors
+META_MARGIN_MB=$(( USED_MB * 5 / 100 ))
+[[ "$META_MARGIN_MB" -lt 512 ]] && META_MARGIN_MB=512
+META_MARGIN_GB=$(( (META_MARGIN_MB + 1023) / 1024 ))
+
+NEW_SIZE_GB=$(( USED_GB + META_MARGIN_GB + HEADROOM_GB ))
+
+# Ensure minimum 2GB
+[[ "$NEW_SIZE_GB" -lt 2 ]] && NEW_SIZE_GB=2
 
 USED_HR=$(numfmt --to=iec-i --suffix=B "${USED_BYTES:-0}" 2>/dev/null || echo "${USED_MB}MB")
 
@@ -191,7 +198,8 @@ USED_HR=$(numfmt --to=iec-i --suffix=B "${USED_BYTES:-0}" 2>/dev/null || echo "$
 CURRENT_SIZE_GB=$(echo "$CURRENT_SIZE_STR" | grep -oP '[0-9]+' || echo "0")
 
 log "Used space: ${USED_HR} (~${USED_GB}GB)"
-log "Current disk: ${CURRENT_SIZE_GB}GB → Target: ${NEW_SIZE_GB}GB (usage ${USED_GB}GB + ${HEADROOM_GB}GB headroom)"
+log "Metadata margin: ${META_MARGIN_GB}GB (for journal, inodes, superblocks)"
+log "Current disk: ${CURRENT_SIZE_GB}GB → Target: ${NEW_SIZE_GB}GB (data ${USED_GB}GB + metadata ${META_MARGIN_GB}GB + headroom ${HEADROOM_GB}GB)"
 
 # Unmount for now
 if ! $DRY_RUN; then
@@ -296,19 +304,73 @@ case "$STORAGE_TYPE" in
         }
         ok "Filesystem check passed."
 
-        # Step 2: Shrink filesystem
-        log "Shrinking filesystem to ${NEW_SIZE_GB}GB..."
-        resize2fs "$LV_PATH" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1
-        ok "Filesystem shrunk to ${NEW_SIZE_GB}GB."
+        # Step 2: Query the true minimum filesystem size
+        log "Querying minimum filesystem size (resize2fs -P)..."
+        MIN_OUT=$(resize2fs -P "$LV_PATH" 2>&1) || true
+        echo "$MIN_OUT" | tee -a "$LOG_FILE"
+        # Parse: "Estimated minimum size of the filesystem: 8069671" (in 4K blocks)
+        MIN_BLOCKS=$(echo "$MIN_OUT" | grep -oP 'minimum size.*?:\s*\K[0-9]+' || echo "0")
+        if [[ "$MIN_BLOCKS" -gt 0 ]]; then
+            # Get block size
+            BLOCK_SIZE=$(dumpe2fs -h "$LV_PATH" 2>/dev/null | awk '/Block size:/{print $3}')
+            BLOCK_SIZE="${BLOCK_SIZE:-4096}"
+            MIN_SIZE_GB=$(( (MIN_BLOCKS * BLOCK_SIZE / 1073741824) + 2 ))  # Round up + 1GB safety
+            log "Filesystem minimum: ${MIN_BLOCKS} blocks × ${BLOCK_SIZE}B = ~${MIN_SIZE_GB}GB"
+            if [[ "$NEW_SIZE_GB" -lt "$MIN_SIZE_GB" ]]; then
+                warn "Target ${NEW_SIZE_GB}GB is below filesystem minimum ${MIN_SIZE_GB}GB. Adjusting."
+                NEW_SIZE_GB="$MIN_SIZE_GB"
+                log "Adjusted target: ${NEW_SIZE_GB}GB"
+            fi
+        fi
+
+        # Step 3: Shrink filesystem with auto-retry
+        MAX_ATTEMPTS=5
+        ATTEMPT=0
+        SHRINK_OK=false
+        TRY_SIZE="$NEW_SIZE_GB"
+        while [[ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            log "Shrinking filesystem to ${TRY_SIZE}GB (attempt ${ATTEMPT}/${MAX_ATTEMPTS})..."
+            RESIZE_OUT=""
+            if RESIZE_OUT=$(resize2fs "$LV_PATH" "${TRY_SIZE}G" 2>&1); then
+                echo "$RESIZE_OUT" | tee -a "$LOG_FILE"
+                ok "Filesystem shrunk to ${TRY_SIZE}GB."
+                NEW_SIZE_GB="$TRY_SIZE"
+                SHRINK_OK=true
+                break
+            else
+                echo "$RESIZE_OUT" | tee -a "$LOG_FILE"
+                warn "resize2fs failed at ${TRY_SIZE}GB. Increasing by 2GB and retrying..."
+                TRY_SIZE=$((TRY_SIZE + 2))
+            fi
+        done
+
+        if ! $SHRINK_OK; then
+            err "resize2fs failed after ${MAX_ATTEMPTS} attempts (last tried: ${TRY_SIZE}GB)."
+            die "Filesystem shrink failed. No data was lost — disk is still ${CURRENT_SIZE_GB}GB."
+        fi
+
+        # Recalculate savings with actual size used
+        SAVINGS_GB=$((CURRENT_SIZE_GB - NEW_SIZE_GB))
 
         # Step 3: Shrink LV
         log "Shrinking LV to ${NEW_SIZE_GB}GB..."
-        lvresize -y -L "${NEW_SIZE_GB}G" "$LV_PATH" >> "$LOG_FILE" 2>&1
-        ok "LV shrunk to ${NEW_SIZE_GB}GB."
+        LV_OUT=""
+        if LV_OUT=$(lvresize -y -L "${NEW_SIZE_GB}G" "$LV_PATH" 2>&1); then
+            echo "$LV_OUT" | tee -a "$LOG_FILE"
+            ok "LV shrunk to ${NEW_SIZE_GB}GB."
+        else
+            echo "$LV_OUT" | tee -a "$LOG_FILE"
+            warn "lvresize failed. Running e2fsck to recover..."
+            e2fsck -f -y "$LV_PATH" 2>&1 | tee -a "$LOG_FILE" || true
+            die "LV shrink failed. Filesystem was already shrunk — run: lvresize -L ${NEW_SIZE_GB}G $LV_PATH"
+        fi
 
         # Step 4: Run fsck again to verify
         log "Verifying filesystem after shrink..."
-        e2fsck -f -y "$LV_PATH" >> "$LOG_FILE" 2>&1 || warn "Post-shrink fsck had warnings (usually harmless)."
+        FSCK_OUT=$(e2fsck -f -y "$LV_PATH" 2>&1) || true
+        echo "$FSCK_OUT" | tee -a "$LOG_FILE"
+        [[ "$FSCK_OUT" == *"UNEXPECTED INCONSISTENCY"* ]] && warn "Post-shrink fsck had warnings." || ok "Post-shrink filesystem check passed."
 
         # Step 5: Update container config
         log "Updating container config..."

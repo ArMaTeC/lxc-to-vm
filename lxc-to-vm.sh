@@ -54,6 +54,7 @@ Options:
   -n, --dry-run          Show what would be done without making changes
   -k, --keep-network     Preserve original network config (only add ens18 adapter)
   -S, --start            Auto-start VM and run health checks after conversion
+  --shrink               Shrink LXC disk to usage + headroom before converting
   -h, --help             Show this help message
   -V, --version          Show version
 
@@ -63,6 +64,7 @@ Examples:
   $0 -c 100 -v 200 -s local-lvm -d 200 -t /mnt/scratch  # Use alt temp dir
   $0 -c 100 -v 200 -s local-lvm -d 32 -B ovmf --start   # UEFI + auto-start
   $0 -c 100 -v 200 -s local-lvm -d 32 --dry-run         # Preview only
+  $0 -c 100 -v 200 -s local-lvm --shrink                # Auto-shrink + convert
 USAGE
     exit 0
 }
@@ -131,7 +133,7 @@ trap cleanup EXIT INT TERM
 # ==============================================================================
 
 CTID="" VMID="" STORAGE="" DISK_SIZE="" DISK_FORMAT="qcow2" BRIDGE="vmbr0" WORK_DIR=""
-BIOS_TYPE="seabios" DRY_RUN=false KEEP_NETWORK=false AUTO_START=false
+BIOS_TYPE="seabios" DRY_RUN=false KEEP_NETWORK=false AUTO_START=false SHRINK_FIRST=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -146,6 +148,7 @@ while [[ $# -gt 0 ]]; do
         -n|--dry-run)    DRY_RUN=true;      shift ;;
         -k|--keep-network) KEEP_NETWORK=true; shift ;;
         -S|--start)      AUTO_START=true;   shift ;;
+        --shrink)        SHRINK_FIRST=true; shift ;;
         -h|--help)       usage ;;
         -V|--version)    echo "v${VERSION}"; exit 0 ;;
         *)               die "Unknown option: $1 (use --help)" ;;
@@ -205,6 +208,174 @@ if [[ "$CT_STATUS" == "running" ]]; then
     fi
 fi
 
+# --- Shrink container disk before conversion ---
+if $SHRINK_FIRST && ! $DRY_RUN; then
+    log "=== PRE-CONVERSION DISK SHRINK ==="
+
+    # Parse rootfs from container config
+    SHRINK_ROOTFS_LINE=$(pct config "$CTID" | grep "^rootfs:")
+    [[ -n "$SHRINK_ROOTFS_LINE" ]] || die "Could not find rootfs config for container $CTID."
+    SHRINK_VOL=$(echo "$SHRINK_ROOTFS_LINE" | sed 's/^rootfs: //' | cut -d',' -f1)
+    SHRINK_STORAGE=$(echo "$SHRINK_VOL" | cut -d':' -f1)
+    SHRINK_CURRENT_STR=$(echo "$SHRINK_ROOTFS_LINE" | grep -oP 'size=\K[0-9]+' || echo "0")
+    SHRINK_STORAGE_TYPE=$(pvesm status 2>/dev/null | awk -v s="$SHRINK_STORAGE" '$1==s{print $2}')
+
+    log "Rootfs: $SHRINK_VOL | Current: ${SHRINK_CURRENT_STR}GB | Storage type: $SHRINK_STORAGE_TYPE"
+
+    # Mount and measure used space
+    log "Mounting container to measure used space..."
+    pct mount "$CTID"
+    SHRINK_ROOT="/var/lib/lxc/${CTID}/rootfs"
+    if [[ -d "$SHRINK_ROOT" ]]; then
+        SHRINK_USED_BYTES=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
+            --exclude='tmp/*' --exclude='run/*' "$SHRINK_ROOT/" 2>/dev/null | awk '{print $1}')
+        SHRINK_USED_MB=$(( ${SHRINK_USED_BYTES:-0} / 1024 / 1024 ))
+        SHRINK_USED_GB=$(( (SHRINK_USED_MB + 1023) / 1024 ))
+    else
+        pct unmount "$CTID" 2>/dev/null || true
+        die "Could not locate rootfs for container $CTID."
+    fi
+    pct unmount "$CTID" 2>/dev/null || true
+
+    SHRINK_USED_HR=$(numfmt --to=iec-i --suffix=B "${SHRINK_USED_BYTES:-0}" 2>/dev/null || echo "${SHRINK_USED_MB}MB")
+    log "Used space: ${SHRINK_USED_HR} (~${SHRINK_USED_GB}GB)"
+
+    # Calculate target size: data + 5% metadata margin (min 512MB) + 1GB headroom
+    SHRINK_META_MB=$(( SHRINK_USED_MB * 5 / 100 ))
+    [[ "$SHRINK_META_MB" -lt 512 ]] && SHRINK_META_MB=512
+    SHRINK_META_GB=$(( (SHRINK_META_MB + 1023) / 1024 ))
+    SHRINK_TARGET_GB=$(( SHRINK_USED_GB + SHRINK_META_GB + 1 ))
+    [[ "$SHRINK_TARGET_GB" -lt 2 ]] && SHRINK_TARGET_GB=2
+
+    if [[ "$SHRINK_TARGET_GB" -ge "$SHRINK_CURRENT_STR" ]]; then
+        ok "Container disk already near optimal (${SHRINK_CURRENT_STR}GB). Skipping shrink."
+    else
+        SHRINK_SAVINGS=$((SHRINK_CURRENT_STR - SHRINK_TARGET_GB))
+        log "Shrink plan: ${SHRINK_CURRENT_STR}GB → ${SHRINK_TARGET_GB}GB (saving ${SHRINK_SAVINGS}GB)"
+
+        case "$SHRINK_STORAGE_TYPE" in
+            lvmthin|lvm)
+                SHRINK_LV=$(pvesm path "$SHRINK_VOL" 2>/dev/null)
+                [[ -n "$SHRINK_LV" && -e "$SHRINK_LV" ]] || die "Could not resolve LV path for $SHRINK_VOL"
+                log "LV path: $SHRINK_LV"
+
+                lvchange -ay "$SHRINK_LV" 2>/dev/null || true
+
+                # Filesystem check
+                log "Running e2fsck..."
+                e2fsck -f -y "$SHRINK_LV" >> "$LOG_FILE" 2>&1 || {
+                    e2fsck -f -y "$SHRINK_LV" >> "$LOG_FILE" 2>&1 || die "Filesystem check failed."
+                }
+                ok "Filesystem check passed."
+
+                # Query true minimum
+                log "Querying minimum filesystem size..."
+                SHRINK_MIN_OUT=$(resize2fs -P "$SHRINK_LV" 2>&1) || true
+                echo "$SHRINK_MIN_OUT" >> "$LOG_FILE"
+                SHRINK_MIN_BLOCKS=$(echo "$SHRINK_MIN_OUT" | grep -oP 'minimum size.*?:\s*\K[0-9]+' || echo "0")
+                if [[ "$SHRINK_MIN_BLOCKS" -gt 0 ]]; then
+                    SHRINK_BLK_SIZE=$(dumpe2fs -h "$SHRINK_LV" 2>/dev/null | awk '/Block size:/{print $3}')
+                    SHRINK_BLK_SIZE="${SHRINK_BLK_SIZE:-4096}"
+                    SHRINK_MIN_GB=$(( (SHRINK_MIN_BLOCKS * SHRINK_BLK_SIZE / 1073741824) + 1 ))
+                    log "Filesystem minimum: ~${SHRINK_MIN_GB}GB"
+                    [[ "$SHRINK_TARGET_GB" -lt "$SHRINK_MIN_GB" ]] && SHRINK_TARGET_GB="$SHRINK_MIN_GB"
+                fi
+
+                # Shrink filesystem with auto-retry
+                SHRINK_OK=false
+                SHRINK_TRY="$SHRINK_TARGET_GB"
+                for attempt in 1 2 3 4 5; do
+                    log "resize2fs to ${SHRINK_TRY}GB (attempt ${attempt}/5)..."
+                    SHRINK_R_OUT=""
+                    if SHRINK_R_OUT=$(resize2fs "$SHRINK_LV" "${SHRINK_TRY}G" 2>&1); then
+                        echo "$SHRINK_R_OUT" >> "$LOG_FILE"
+                        ok "Filesystem shrunk to ${SHRINK_TRY}GB."
+                        SHRINK_TARGET_GB="$SHRINK_TRY"
+                        SHRINK_OK=true
+                        break
+                    else
+                        echo "$SHRINK_R_OUT" >> "$LOG_FILE"
+                        warn "resize2fs failed at ${SHRINK_TRY}GB — increasing by 1GB..."
+                        SHRINK_TRY=$((SHRINK_TRY + 1))
+                    fi
+                done
+                $SHRINK_OK || die "resize2fs failed after 5 attempts. Container disk unchanged."
+
+                # Shrink LV
+                log "Shrinking LV to ${SHRINK_TARGET_GB}GB..."
+                if SHRINK_LV_OUT=$(lvresize -y -L "${SHRINK_TARGET_GB}G" "$SHRINK_LV" 2>&1); then
+                    echo "$SHRINK_LV_OUT" >> "$LOG_FILE"
+                    ok "LV shrunk to ${SHRINK_TARGET_GB}GB."
+                else
+                    echo "$SHRINK_LV_OUT" >> "$LOG_FILE"
+                    e2fsck -f -y "$SHRINK_LV" >> "$LOG_FILE" 2>&1 || true
+                    die "lvresize failed. Run manually: lvresize -L ${SHRINK_TARGET_GB}G $SHRINK_LV"
+                fi
+
+                # Verify
+                e2fsck -f -y "$SHRINK_LV" >> "$LOG_FILE" 2>&1 || true
+
+                # Update container config
+                pct set "$CTID" --rootfs "${SHRINK_VOL},size=${SHRINK_TARGET_GB}G"
+                ok "Container config updated: ${SHRINK_CURRENT_STR}GB → ${SHRINK_TARGET_GB}GB (saved ${SHRINK_SAVINGS}GB)"
+                ;;
+            dir|nfs|cifs|glusterfs)
+                SHRINK_DISK=$(pvesm path "$SHRINK_VOL" 2>/dev/null)
+                [[ -n "$SHRINK_DISK" && -f "$SHRINK_DISK" ]] || die "Could not find disk image: $SHRINK_DISK"
+                SHRINK_IMG_FMT=$(qemu-img info "$SHRINK_DISK" 2>/dev/null | awk '/file format:/{print $3}')
+
+                if [[ "$SHRINK_IMG_FMT" == "raw" ]]; then
+                    SHRINK_LOOP=$(losetup --show -f "$SHRINK_DISK")
+                    e2fsck -f -y "$SHRINK_LOOP" >> "$LOG_FILE" 2>&1 || die "Filesystem check failed."
+                    resize2fs "$SHRINK_LOOP" "${SHRINK_TARGET_GB}G" >> "$LOG_FILE" 2>&1 || die "resize2fs failed."
+                    losetup -d "$SHRINK_LOOP" 2>/dev/null || true
+                    truncate -s "${SHRINK_TARGET_GB}G" "$SHRINK_DISK"
+                elif [[ "$SHRINK_IMG_FMT" == "qcow2" ]]; then
+                    SHRINK_TEMP="${SHRINK_DISK}.shrink.raw"
+                    qemu-img convert -f qcow2 -O raw "$SHRINK_DISK" "$SHRINK_TEMP"
+                    SHRINK_LOOP=$(losetup --show -f "$SHRINK_TEMP")
+                    e2fsck -f -y "$SHRINK_LOOP" >> "$LOG_FILE" 2>&1 || { losetup -d "$SHRINK_LOOP" 2>/dev/null; rm -f "$SHRINK_TEMP"; die "fsck failed."; }
+                    resize2fs "$SHRINK_LOOP" "${SHRINK_TARGET_GB}G" >> "$LOG_FILE" 2>&1 || { losetup -d "$SHRINK_LOOP" 2>/dev/null; rm -f "$SHRINK_TEMP"; die "resize2fs failed."; }
+                    losetup -d "$SHRINK_LOOP" 2>/dev/null || true
+                    truncate -s "${SHRINK_TARGET_GB}G" "$SHRINK_TEMP"
+                    qemu-img convert -f raw -O qcow2 "$SHRINK_TEMP" "$SHRINK_DISK"
+                    rm -f "$SHRINK_TEMP"
+                else
+                    die "Unsupported image format: $SHRINK_IMG_FMT"
+                fi
+                pct set "$CTID" --rootfs "${SHRINK_VOL},size=${SHRINK_TARGET_GB}G"
+                ok "Disk image shrunk: ${SHRINK_CURRENT_STR}GB → ${SHRINK_TARGET_GB}GB"
+                ;;
+            zfspool)
+                SHRINK_ZVOL=$(pvesm path "$SHRINK_VOL" 2>/dev/null)
+                SHRINK_ZDS=$(echo "$SHRINK_ZVOL" | sed 's|/dev/zvol/||')
+                e2fsck -f -y "$SHRINK_ZVOL" >> "$LOG_FILE" 2>&1 || die "Filesystem check failed."
+                resize2fs "$SHRINK_ZVOL" "${SHRINK_TARGET_GB}G" >> "$LOG_FILE" 2>&1 || die "resize2fs failed."
+                zfs set volsize="${SHRINK_TARGET_GB}G" "$SHRINK_ZDS" >> "$LOG_FILE" 2>&1 || die "ZFS volsize shrink failed."
+                e2fsck -f -y "$SHRINK_ZVOL" >> "$LOG_FILE" 2>&1 || true
+                pct set "$CTID" --rootfs "${SHRINK_VOL},size=${SHRINK_TARGET_GB}G"
+                ok "ZFS volume shrunk: ${SHRINK_CURRENT_STR}GB → ${SHRINK_TARGET_GB}GB"
+                ;;
+            *)
+                die "Unsupported storage type for shrink: $SHRINK_STORAGE_TYPE"
+                ;;
+        esac
+
+        SHRINK_SAVINGS=$((SHRINK_CURRENT_STR - SHRINK_TARGET_GB))
+    fi
+
+    # Auto-set DISK_SIZE if user didn't provide one
+    if [[ -z "$DISK_SIZE" ]]; then
+        DISK_SIZE="$SHRINK_TARGET_GB"
+        ok "Auto-setting disk size to ${DISK_SIZE}GB (matches shrunk container)"
+    fi
+fi
+
+# If --shrink used in dry-run, show what would happen
+if $SHRINK_FIRST && $DRY_RUN; then
+    log "Shrink: would shrink container $CTID disk before conversion (details shown below)."
+fi
+
 # --- Dry-run summary ---
 if $DRY_RUN; then
     echo ""
@@ -236,7 +407,12 @@ if $DRY_RUN; then
         echo -e "  ${RED}[✗]${NC} Insufficient space: ${AVAIL_MB:-0}MB available (need ${REQUIRED_MB}MB) in $WORK_CHECK"
     fi
     echo ""
+    echo -e "  ${BOLD}Shrink:${NC}      $SHRINK_FIRST"
+    echo ""
     echo -e "  ${BOLD}Steps that would be performed:${NC}"
+    if $SHRINK_FIRST; then
+        echo "    0. Shrink container disk to usage + headroom before conversion"
+    fi
     echo "    1. Create ${DISK_SIZE}GB raw disk image"
     if [[ "$BIOS_TYPE" == "ovmf" ]]; then
         echo "    2. Partition disk (GPT + 512MB EFI System Partition)"

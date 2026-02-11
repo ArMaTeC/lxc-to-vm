@@ -157,6 +157,7 @@ sudo ./lxc-to-vm.sh \
     -t /mnt/scratch \
     -B ovmf \
     --keep-network \
+    --shrink \
     --start
 ```
 
@@ -175,6 +176,7 @@ sudo ./lxc-to-vm.sh \
 | `-n` | `--dry-run` | Preview what would happen without making changes | — |
 | `-k` | `--keep-network` | Preserve original network config (translate eth0→ens18) | — |
 | `-S` | `--start` | Auto-start VM after conversion and run health checks | — |
+| | `--shrink` | Shrink LXC disk to usage + headroom before converting | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -257,6 +259,13 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 --dry-run
 
 ```bash
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 --keep-network
+```
+
+### Shrink + convert in one command (no need to specify disk size)
+
+```bash
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
+# Automatically shrinks 200GB disk to ~31GB, then converts and boots the VM
 ```
 
 ### Convert an Alpine LXC
