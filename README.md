@@ -27,15 +27,20 @@ A robust Bash script that converts **Proxmox LXC containers** into fully bootabl
 
 ## Features
 
-- **One-command conversion** — turn any Debian/Ubuntu LXC into a bootable VM
+- **One-command conversion** — turn any LXC into a bootable VM
+- **Multi-distro support** — Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, Arch Linux (auto-detected)
+- **BIOS & UEFI boot** — MBR/SeaBIOS (default) or GPT/OVMF with `--bios ovmf`
+- **Dry-run mode** — preview every step without making changes (`--dry-run`)
+- **Network preservation** — keep original network config with `--keep-network`, or replace with DHCP on `ens18`
+- **Auto-start & health checks** — boot the VM and verify guest agent, IP, and reachability (`--start`)
+- **Post-conversion validation** — automatic 6-point check (disk, boot order, network, agent, EFI)
 - **Interactive & non-interactive modes** — use CLI flags for scripting or answer prompts manually
 - **Auto-dependency installation** — missing tools (`parted`, `kpartx`, `rsync`, etc.) are installed automatically
 - **Input validation** — catches invalid IDs, missing storage, and format errors before work begins
 - **Storage validation** — verifies the target Proxmox storage exists before proceeding
-- **Automatic container stop** — running containers are safely stopped for a consistent filesystem copy
+- **Disk space pre-check** — verifies sufficient space; suggests alternative mount points if needed
+- **Custom working directory** — use `--temp-dir` to place the temporary disk image on any mount point
 - **LXC config inheritance** — memory, CPU cores are pulled from the source container config
-- **Networking reconfiguration** — adapts `/etc/network/interfaces` and Netplan configs for VM NIC (`ens18`)
-- **Kernel & GRUB injection** — installs a full Linux kernel and bootloader via chroot
 - **Serial console support** — enables `ttyS0` serial console for Proxmox terminal access
 - **Colored output** — clear, color-coded progress messages (auto-disabled when piped)
 - **Full logging** — all operations logged to `/var/log/lxc-to-vm.log`
@@ -49,7 +54,7 @@ A robust Bash script that converts **Proxmox LXC containers** into fully bootabl
 | Requirement | Details |
 |---|---|
 | **Proxmox VE** | Version 7.x or 8.x |
-| **Source LXC** | Debian or Ubuntu based container |
+| **Source LXC** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, or Arch based container |
 | **Root access** | Script must run as `root` on the Proxmox host |
 | **Free disk space** | At least 2× the container's used space in `/var/lib/vz/dump/` |
 | **Network** | Internet access (to install kernel/GRUB packages inside chroot) |
@@ -66,13 +71,17 @@ A robust Bash script that converts **Proxmox LXC containers** into fully bootabl
 ## Quick Start
 
 ```bash
-# Download the script
+# Download the scripts
 wget https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
+wget https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh
 
-# Make it executable
-chmod +x lxc-to-vm.sh
+# Make them executable
+chmod +x lxc-to-vm.sh shrink-lxc.sh
 
-# Run it (interactive mode)
+# (Optional) Shrink a large container before converting
+sudo ./shrink-lxc.sh -c 100
+
+# Convert LXC to VM (interactive mode)
 sudo ./lxc-to-vm.sh
 ```
 
@@ -83,6 +92,23 @@ git clone https://github.com/ArMaTeC/lxc-to-vm.git
 cd lxc-to-vm
 sudo ./lxc-to-vm.sh
 ```
+
+### Shrink Before Convert
+
+If your container has a large disk (e.g. 200GB) but only uses a fraction of it, shrink it first to save time and temp disk space:
+
+```bash
+# Shrink CT 100's disk to usage + 1GB headroom
+sudo ./shrink-lxc.sh -c 100
+
+# Preview without changes
+sudo ./shrink-lxc.sh -c 100 --dry-run
+
+# Custom headroom (2GB)
+sudo ./shrink-lxc.sh -c 100 -g 2
+```
+
+The shrink script supports **LVM-thin**, **directory** (raw/qcow2), and **ZFS** storage backends.
 
 ---
 
@@ -98,7 +124,7 @@ sudo ./lxc-to-vm.sh
 
 ```
 ==========================================
-   PROXMOX LXC TO VM CONVERTER v3.0.0
+   PROXMOX LXC TO VM CONVERTER v4.0.0
 ==========================================
 Enter Source Container ID (e.g., 100): 100
 Enter New VM ID (e.g., 200): 200
@@ -127,7 +153,11 @@ sudo ./lxc-to-vm.sh \
     -s local-lvm \
     -d 32 \
     -f qcow2 \
-    -b vmbr0
+    -b vmbr0 \
+    -t /mnt/scratch \
+    -B ovmf \
+    --keep-network \
+    --start
 ```
 
 ### Options Reference
@@ -140,6 +170,11 @@ sudo ./lxc-to-vm.sh \
 | `-d` | `--disk-size` | Disk size in GB | *(prompted)* |
 | `-f` | `--format` | Disk image format (`qcow2`, `raw`, `vmdk`) | `qcow2` |
 | `-b` | `--bridge` | Network bridge name | `vmbr0` |
+| `-t` | `--temp-dir` | Working directory for the temp disk image | `/var/lib/vz/dump` |
+| `-B` | `--bios` | Firmware type (`seabios` or `ovmf` for UEFI) | `seabios` |
+| `-n` | `--dry-run` | Preview what would happen without making changes | — |
+| `-k` | `--keep-network` | Preserve original network config (translate eth0→ens18) | — |
+| `-S` | `--start` | Auto-start VM after conversion and run health checks | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -147,21 +182,20 @@ sudo ./lxc-to-vm.sh \
 
 ## How It Works
 
-The conversion follows six stages:
+The conversion follows eight stages:
 
 ```
 ┌─────────────────────────────────────────────────┐
 │  1. ARGUMENT PARSING & VALIDATION               │
 │     Parse CLI flags or prompt interactively.     │
-│     Validate IDs, storage, disk size, format.    │
+│     Validate IDs, storage, format, BIOS type.    │
 ├─────────────────────────────────────────────────┤
-│  2. SETUP & DEPENDENCY CHECKS                   │
-│     Auto-install missing tools.                  │
-│     Stop running container if needed.            │
+│  2. DRY-RUN CHECK (if --dry-run)                │
+│     Show full plan + space check, then exit.     │
 ├─────────────────────────────────────────────────┤
 │  3. DISK CREATION                               │
-│     Create raw disk image with truncate.         │
-│     Partition (MBR), format ext4, mount.         │
+│     MBR/BIOS or GPT/UEFI+ESP partitioning.      │
+│     Format ext4 (+ FAT32 ESP for UEFI).         │
 ├─────────────────────────────────────────────────┤
 │  4. DATA COPY                                   │
 │     Mount LXC rootfs via pct mount.              │
@@ -169,15 +203,19 @@ The conversion follows six stages:
 │     filesystems: /dev, /proc, /sys, etc.).       │
 ├─────────────────────────────────────────────────┤
 │  5. BOOTLOADER INJECTION (CHROOT)               │
-│     Write /etc/fstab with new UUID.              │
-│     Reconfigure networking for VM NIC (ens18).   │
-│     Install Linux kernel + GRUB bootloader.      │
-│     Enable serial console.                       │
+│     Auto-detect distro (apt/apk/yum/pacman).    │
+│     Write /etc/fstab, configure networking.      │
+│     Install kernel + GRUB (BIOS or EFI).        │
 ├─────────────────────────────────────────────────┤
 │  6. VM CREATION                                 │
-│     Create Proxmox VM (qm create).              │
-│     Import disk image to target storage.         │
-│     Attach disk, configure boot order.           │
+│     Create VM (qm create), import disk.         │
+│     Add EFI disk for UEFI if needed.             │
+├─────────────────────────────────────────────────┤
+│  7. POST-CONVERSION VALIDATION                  │
+│     6-point check: disk, boot, network, agent.  │
+├─────────────────────────────────────────────────┤
+│  8. AUTO-START & HEALTH CHECK (if --start)      │
+│     Boot VM, wait for guest agent, verify IP.    │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -197,11 +235,42 @@ sudo ./lxc-to-vm.sh -c 105 -v 300 -s local-lvm -d 20
 sudo ./lxc-to-vm.sh -c 105 -v 300 -s local-lvm -d 20 -f raw -b vmbr1
 ```
 
+### Large container — use an alternative temp directory with more space
+
+```bash
+sudo ./lxc-to-vm.sh -c 127 -v 300 -s local-lvm -d 201 -f raw -t /mnt/bigdisk
+```
+
+### UEFI boot with auto-start and health checks
+
+```bash
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 -B ovmf --start
+```
+
+### Dry-run — preview the conversion plan without doing anything
+
+```bash
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 --dry-run
+```
+
+### Keep existing network config (translate eth0 → ens18)
+
+```bash
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 --keep-network
+```
+
+### Convert an Alpine LXC
+
+```bash
+sudo ./lxc-to-vm.sh -c 110 -v 210 -s local-lvm -d 10
+# Distro is auto-detected — Alpine packages (apk) are used automatically
+```
+
 ### Check the version
 
 ```bash
 ./lxc-to-vm.sh --version
-# v3.0.0
+# v4.0.0
 ```
 
 ### View the log after conversion
@@ -276,18 +345,35 @@ After the script completes:
 
 ### Disk space issues
 
-- The script needs temporary space in `/var/lib/vz/dump/` equal to the disk size you specify.
-- Ensure you have enough free space: `df -h /var/lib/vz/dump/`
+- The script checks available space **before starting** and will warn you if there isn't enough room.
+- In interactive mode, it lists mount points with sufficient space and lets you pick one.
+- In non-interactive mode, use `--temp-dir` to specify a path with enough room:
+  ```bash
+  sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 200 -t /mnt/scratch
+  ```
+- Required space: at least `DISK_SIZE + 1 GB` on the working directory's filesystem.
+
+---
+
+## Supported Distros
+
+| Distro Family | Detected IDs | Package Manager | Notes |
+|---|---|---|---|
+| **Debian/Ubuntu** | `debian`, `ubuntu`, `linuxmint`, `pop`, `kali` | `apt` | Primary target, most tested |
+| **Alpine** | `alpine` | `apk` | OpenRC init system configured automatically |
+| **RHEL/CentOS** | `centos`, `rhel`, `rocky`, `alma`, `fedora` | `yum`/`dnf` | Kernel + GRUB2 |
+| **Arch Linux** | `arch`, `manjaro`, `endeavouros` | `pacman` | Kernel + GRUB |
+
+Distro is auto-detected from `/etc/os-release` inside the container.
 
 ---
 
 ## Limitations
 
-- **Debian/Ubuntu only** — the chroot step installs packages via `apt`. Other distros (Alpine, CentOS) are not supported.
-- **MBR/BIOS boot only** — EFI/UEFI boot is not currently supported.
 - **Single-disk containers** — multi-mount-point LXC configs are not handled.
 - **No ZFS-to-ZFS** — the disk is always created as a raw image and imported. Native ZFS dataset cloning is not used.
 - **Proxmox host only** — must be run directly on the Proxmox VE node, not remotely.
+- **x86_64 only** — ARM-based containers are not supported.
 
 ---
 
