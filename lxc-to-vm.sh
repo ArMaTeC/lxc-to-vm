@@ -367,9 +367,10 @@ if $SHRINK_FIRST && ! $DRY_RUN; then
     fi
 
     # Auto-set DISK_SIZE if user didn't provide one
+    # Add 3GB overhead for MBR/GPT partition table + ext4 filesystem overhead (journal, inodes, superblocks ~5%)
     if [[ -z "$DISK_SIZE" ]]; then
-        DISK_SIZE="$SHRINK_TARGET_GB"
-        ok "Auto-setting disk size to ${DISK_SIZE}GB (matches shrunk container)"
+        DISK_SIZE=$(( SHRINK_TARGET_GB + 3 ))
+        ok "Auto-setting VM disk size to ${DISK_SIZE}GB (container: ${SHRINK_TARGET_GB}GB + 3GB partition/ext4 overhead)"
     fi
 fi
 
@@ -460,13 +461,13 @@ pick_work_dir() {
     avail_mb=$(check_space "$base")
 
     if [[ "$avail_mb" -ge "$REQUIRED_MB" ]]; then
-        log "Workspace: $base — ${avail_mb}MB available (need ${REQUIRED_MB}MB). OK."
+        log "Workspace: $base — ${avail_mb}MB available (need ${REQUIRED_MB}MB). OK." >&2
         echo "$base"
         return 0
     fi
 
     echo "" >&2
-    warn "Insufficient space in $base: ${avail_mb}MB available, ${REQUIRED_MB}MB required."
+    warn "Insufficient space in $base: ${avail_mb}MB available, ${REQUIRED_MB}MB required." >&2
     echo -e "  ${YELLOW}Note:${NC} The script needs filesystem space for a temporary ${DISK_SIZE}GB raw image." >&2
     echo -e "  ${YELLOW}      ${NC} LVM/ZFS storage (e.g. local-lvm) cannot be used directly as a working directory." >&2
     echo -e "  ${YELLOW}      ${NC} The temp image is imported to your target storage after creation." >&2
@@ -498,7 +499,7 @@ pick_work_dir() {
     if [[ ${#candidates_mp[@]} -eq 1 ]]; then
         local auto_path="${candidates_mp[0]}"
         local auto_avail="${candidates_avail[0]}"
-        ok "Auto-selecting workspace: $auto_path (${auto_avail}MB free)"
+        ok "Auto-selecting workspace: $auto_path (${auto_avail}MB free)" >&2
         mkdir -p "$auto_path" 2>/dev/null || die "Cannot create directory: $auto_path"
         echo "$auto_path"
         return 0
@@ -533,7 +534,7 @@ pick_work_dir() {
         die "'$selected_path' still insufficient: ${sel_avail}MB available, ${REQUIRED_MB}MB required."
     fi
 
-    ok "Using workspace: $selected_path (${sel_avail}MB available)"
+    ok "Using workspace: $selected_path (${sel_avail}MB available)" >&2
     echo "$selected_path"
 }
 
