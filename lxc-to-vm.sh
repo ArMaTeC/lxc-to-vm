@@ -173,13 +173,15 @@ ensure_dependency mkfs.ext4 e2fsprogs
 [[ -z "$CTID" ]]      && read -rp "Enter Source Container ID (e.g., 100): " CTID
 [[ -z "$VMID" ]]      && read -rp "Enter New VM ID (e.g., 200): " VMID
 [[ -z "$STORAGE" ]]   && read -rp "Enter Target Storage Name (e.g., local-lvm): " STORAGE
-[[ -z "$DISK_SIZE" ]] && read -rp "Enter Disk Size in GB (must be > used space, e.g., 32): " DISK_SIZE
+[[ -z "$DISK_SIZE" ]] && ! $SHRINK_FIRST && read -rp "Enter Disk Size in GB (must be > used space, e.g., 32): " DISK_SIZE
 
 # --- Input Validation ---
 [[ "$CTID" =~ ^[0-9]+$ ]]      || die "Container ID must be a positive integer, got: '$CTID'"
 [[ "$VMID" =~ ^[0-9]+$ ]]      || die "VM ID must be a positive integer, got: '$VMID'"
-[[ "$DISK_SIZE" =~ ^[0-9]+$ ]] || die "Disk size must be a positive integer (GB), got: '$DISK_SIZE'"
-[[ "$DISK_SIZE" -ge 1 ]]       || die "Disk size must be at least 1 GB."
+if [[ -n "$DISK_SIZE" ]]; then
+    [[ "$DISK_SIZE" =~ ^[0-9]+$ ]] || die "Disk size must be a positive integer (GB), got: '$DISK_SIZE'"
+    [[ "$DISK_SIZE" -ge 1 ]]       || die "Disk size must be at least 1 GB."
+fi
 [[ "$DISK_FORMAT" =~ ^(qcow2|raw|vmdk)$ ]] || die "Unsupported disk format: '$DISK_FORMAT' (use qcow2, raw, or vmdk)"
 [[ "$BIOS_TYPE" =~ ^(seabios|ovmf)$ ]] || die "Unsupported BIOS type: '$BIOS_TYPE' (use seabios or ovmf)"
 
@@ -374,6 +376,11 @@ fi
 # If --shrink used in dry-run, show what would happen
 if $SHRINK_FIRST && $DRY_RUN; then
     log "Shrink: would shrink container $CTID disk before conversion (details shown below)."
+fi
+
+# Final DISK_SIZE check — must be set by now (either by user, prompt, or --shrink)
+if [[ -z "$DISK_SIZE" ]] || ! [[ "$DISK_SIZE" =~ ^[0-9]+$ ]] || [[ "$DISK_SIZE" -lt 1 ]]; then
+    die "Disk size is not set. Provide -d <GB> or use --shrink to auto-calculate."
 fi
 
 # --- Dry-run summary ---
