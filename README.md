@@ -182,7 +182,7 @@ sudo ./lxc-to-vm.sh
 
 ```
 ==========================================
-   PROXMOX LXC TO VM CONVERTER v4.0.0
+   PROXMOX LXC TO VM CONVERTER v6.0.0
 ==========================================
 Enter Source Container ID (e.g., 100): 100
 Enter New VM ID (e.g., 200): 200
