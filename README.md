@@ -32,7 +32,18 @@ A robust Bash toolkit that converts **Proxmox LXC containers** into fully bootab
   - [--bios ovmf (UEFI Boot)](#--bios-ovmf-uefi-boot)
   - [--keep-network (Network Preservation)](#--keep-network-network-preservation)
   - [--start (Auto-Start & Health Checks)](#--start-auto-start--health-checks)
-  - [Disk Space Management](#disk-space-management)
+  - [Batch & Range Conversion](#batch--range-conversion)
+  - [Snapshot & Rollback](#snapshot--rollback)
+  - [Configuration Profiles](#configuration-profiles)
+  - [Resume Capability](#resume-capability)
+  - [Auto-Destroy Source](#auto-destroy-source)
+- [v6.0.0 Feature Deep Dives](#v600-feature-deep-dives)
+  - [Wizard Mode (--wizard)](#wizard-mode---wizard)
+  - [Parallel Batch Processing (--parallel)](#parallel-batch-processing---parallel)
+  - [Pre-Flight Validation (--validate-only)](#pre-flight-validation---validate-only)
+  - [Cloud/Remote Storage Export (--export-to)](#cloudremote-storage-export---export-to)
+  - [VM Template Creation (--as-template)](#vm-template-creation---as-template)
+- [Disk Space Management](#disk-space-management)
   - [Post-Conversion Validation](#post-conversion-validation)
 - [Post-Conversion Steps](#post-conversion-steps)
 - [Troubleshooting](#troubleshooting)
@@ -75,7 +86,15 @@ This project includes two scripts:
 - **Colored output** — color-coded progress messages (auto-disabled when piped)
 - **Full logging** — all operations logged to `/var/log/lxc-to-vm.log`
 - **Safe cleanup** — trap-based cleanup removes temp files and loop devices on exit or error
-- **Multiple disk formats** — `qcow2` (default), `raw`, and `vmdk`
+- **Wizard mode** — interactive TUI with progress bars and guided setup (`--wizard`)
+- **Parallel batch processing** — run N conversions concurrently (`--parallel N`)
+- **Pre-flight validation** — comprehensive checks without converting (`--validate-only`)
+- **Cloud/remote export** — export VM disks to S3, NFS, or SSH destinations (`--export-to`)
+- **VM template creation** — convert to Proxmox template with optional sysprep (`--as-template`)
+- **Auto-rollback** — automatically restore container if conversion fails (`--rollback-on-failure`)
+- **Configuration profiles** — save and reuse common conversion settings (`--save-profile`, `--profile`)
+- **Resume capability** — resume interrupted conversions from partial state (`--resume`)
+- **Auto-cleanup** — destroy original LXC after successful conversion (`--destroy-source`)
 
 ### Disk Shrinker (`shrink-lxc.sh`)
 
@@ -219,6 +238,19 @@ sudo ./lxc-to-vm.sh \
 | `-k` | `--keep-network` | Preserve original network config (translate eth0→ens18) | — |
 | `-S` | `--start` | Auto-start VM after conversion and run health checks | — |
 | | `--shrink` | Shrink LXC disk to usage + headroom before converting (skips disk size prompt) | — |
+| | `--snapshot` | Create LXC snapshot before conversion for rollback safety | — |
+| | `--rollback-on-failure` | Auto-rollback to snapshot if conversion fails | — |
+| | `--destroy-source` | Destroy original LXC after successful conversion | — |
+| | `--resume` | Resume interrupted conversion from partial state | — |
+| | `--parallel <N>` | Run N conversions in parallel (batch mode) | `1` |
+| | `--validate-only` | Run pre-flight checks without converting | — |
+| | `--export-to <DEST>` | Export VM disk after conversion (s3://, nfs://, ssh://) | — |
+| | `--as-template` | Convert to VM template instead of regular VM | — |
+| | `--sysprep` | Clean template for cloning (remove SSH keys, machine-id) | — |
+| | `--wizard` | Start interactive TUI wizard with progress bars | — |
+| | `--save-profile <NAME>` | Save current options as a named profile | — |
+| | `--profile <NAME>` | Load options from a saved profile | — |
+| | `--list-profiles` | List all saved profiles | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -306,9 +338,42 @@ sudo ./lxc-to-vm.sh -c 127 -v 300 -s local-lvm -d 201 -f raw -t /mnt/bigdisk
 sudo ./lxc-to-vm.sh -c 110 -v 210 -s local-lvm -d 10
 ```
 
+**Create golden image template:**
+```bash
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --as-template --sysprep
+```
+
+**Wizard mode (interactive TUI):**
+```bash
+sudo ./lxc-to-vm.sh --wizard
+```
+
 **Everything at once:**
 ```bash
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -B ovmf --shrink --keep-network --start
+```
+
+**Batch conversion:**
+```bash
+# Create conversions.txt with CTID VMID pairs
+cat > conversions.txt << 'EOF'
+100 200
+101 201
+105 205
+EOF
+
+sudo ./lxc-to-vm.sh --batch conversions.txt
+```
+
+**Range conversion:**
+```bash
+sudo ./lxc-to-vm.sh --range 100-110:200-210 -s local-lvm --shrink
+```
+
+**Full migration with safety and cleanup:**
+```bash
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
+  --snapshot --rollback-on-failure --shrink --start --destroy-source
 ```
 
 ---
@@ -494,6 +559,246 @@ After creating the VM, the script automatically runs a **6-point validation chec
 
 Results are shown as pass/fail with a summary count. This runs automatically — no flag needed.
 
+### Batch & Range Conversion
+
+Convert multiple containers at once using batch files or range specifications:
+
+**Batch file format** (`conversions.txt`):
+```
+# Comment lines start with #
+100 200
+101 201
+105 205
+```
+
+Run batch conversion:
+```bash
+sudo ./lxc-to-vm.sh --batch conversions.txt
+```
+
+**Range mode** converts a sequence of CTs to VMs:
+```bash
+# Convert CT 100-110 to VMs 200-210 (same count required)
+sudo ./lxc-to-vm.sh --range 100-110:200-210 -s local-lvm --shrink
+```
+
+The script processes each conversion sequentially with a summary at the end showing successful/failed conversions.
+
+### Snapshot & Rollback
+
+Create a snapshot before conversion for instant rollback if something goes wrong:
+
+```bash
+# Create snapshot, convert, auto-rollback on failure
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --snapshot --rollback-on-failure
+```
+
+How it works:
+1. Creates snapshot `pre-conversion-<timestamp>` before any changes
+2. If conversion fails and `--rollback-on-failure` is set, automatically restores the container
+3. On success, the snapshot is removed (unless the conversion failed)
+
+**Manual rollback** (if needed):
+```bash
+pct rollback 100 pre-conversion-20250211-143022
+```
+
+### Configuration Profiles
+
+Save common conversion settings for reuse:
+
+```bash
+# Save current settings as a profile
+sudo ./lxc-to-vm.sh -s local-lvm -B ovmf --keep-network --save-profile webserver
+
+# List saved profiles
+sudo ./lxc-to-vm.sh --list-profiles
+
+# Use a profile (combine with other flags)
+sudo ./lxc-to-vm.sh -c 100 -v 200 --profile webserver
+
+# Override profile settings with CLI flags
+sudo ./lxc-to-vm.sh -c 100 -v 200 --profile webserver -b vmbr1
+```
+
+Profiles are stored in `/var/lib/lxc-to-vm/profiles/`.
+
+### Resume Capability
+
+If a long conversion is interrupted (SSH disconnect, power loss), resume from where it left off:
+
+```bash
+# Start conversion
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 200
+
+# If interrupted, resume with:
+sudo ./lxc-to-vm.sh -c 100 -v 200 --resume
+```
+
+Resume state includes:
+- Partial rsync data (in `${TEMP_DIR}/.rsync-partial`)
+- Conversion stage tracking
+- Timestamp of last attempt
+
+Resume only works for the rsync stage. If conversion fails during bootloader injection or VM creation, the resume state is cleared and you must restart.
+
+### Auto-Destroy Source Container
+
+After successful VM conversion, automatically remove the original LXC:
+
+```bash
+# Convert, start VM, verify health, then destroy original
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start --destroy-source
+```
+
+**Warning:** Only use `--destroy-source` after testing your VM works. Combine with `--snapshot` for extra safety:
+
+```bash
+# Full safe migration: snapshot, convert, verify, destroy
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
+  --snapshot --rollback-on-failure --shrink --start --destroy-source
+```
+
+---
+
+## v6.0.0 Feature Deep Dives
+
+### Wizard Mode (--wizard)
+
+Launch an interactive TUI wizard with progress bars and guided setup:
+
+```bash
+sudo ./lxc-to-vm.sh --wizard
+```
+
+The wizard guides you through:
+1. Selecting source container and target VM ID
+2. Choosing storage target
+3. Shrink and disk size options
+4. UEFI/BIOS selection
+5. Network configuration options
+6. Snapshot and rollback preferences
+7. Auto-start and cleanup options
+8. Progress bars during conversion with real-time status
+
+### Parallel Batch Processing (--parallel)
+
+Run multiple conversions concurrently for mass migrations:
+
+```bash
+# Process 4 containers simultaneously
+sudo ./lxc-to-vm.sh --batch conversions.txt --parallel 4
+```
+
+Benefits:
+- **Faster mass migrations** — multiple containers convert simultaneously
+- **Resource management** — controls concurrent disk I/O and memory usage
+- **Progress tracking** — shows which conversions are running/completed
+
+Best practices:
+- Set parallel jobs based on your I/O capacity (start with 2-4)
+- Monitor disk and network utilization
+- Each conversion still gets its own validation and logging
+
+### Pre-Flight Validation (--validate-only)
+
+Check if a container is ready for conversion without making changes:
+
+```bash
+# Validate single container
+sudo ./lxc-to-vm.sh -c 100 --validate-only
+
+# Validate with specific container
+sudo ./lxc-to-vm.sh --validate-only -c 105
+```
+
+Checks performed:
+- Container exists and is accessible
+- Container state (stopped vs running)
+- Distro detection and compatibility
+- Root filesystem type
+- Network configuration
+- Storage availability
+- Required dependencies
+
+Output includes a readiness score and specific recommendations.
+
+### Cloud/Remote Storage Export (--export-to)
+
+Automatically export the VM disk after successful conversion:
+
+```bash
+# Export to AWS S3
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --export-to s3://my-backup-bucket/vms/
+
+# Export to NFS share
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --export-to nfs://nas-server/backup/
+
+# Export via SSH
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --export-to ssh://backup-server:/storage/vms/
+```
+
+Supported destinations:
+- **S3**: Requires `aws` CLI configured
+- **NFS**: Mounts and copies (ensure NFS is mounted first)
+- **SSH/SCP**: Requires SSH key authentication
+
+Combine with batch mode for automated backup workflows.
+
+### VM Template Creation (--as-template)
+
+Convert a container directly to a Proxmox VM template:
+
+```bash
+# Create template from container
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --as-template
+
+# Template with sysprep for cloning
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --as-template --sysprep
+```
+
+What is a VM template?
+- Read-only VM base image for rapid cloning
+- Ideal for creating golden images from configured containers
+- Clones start faster than new installations
+
+**Sysprep option** (`--sysprep`):
+- Removes SSH host keys
+- Clears machine-id
+- Removes persistent network rules
+- Truncates logs
+- Cleans temp files
+
+This creates a clean image safe for cloning without identity conflicts.
+
+### Complete Migration Example
+
+Full workflow combining multiple v6.0.0 features:
+
+```bash
+# 1. Validate the container first
+sudo ./lxc-to-vm.sh -c 100 --validate-only
+
+# 2. Run wizard for guided setup
+sudo ./lxc-to-vm.sh --wizard
+
+# 3. Full automated migration with all safety features
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
+  --shrink \
+  --snapshot \
+  --rollback-on-failure \
+  --start \
+  --destroy-source \
+  --export-to s3://backup/vms/
+
+# 4. Batch migrate 10 containers with 3 parallel jobs
+sudo ./lxc-to-vm.sh --batch production-vms.txt --parallel 3
+
+# 5. Create golden image template
+sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm \
+  --as-template --sysprep --snapshot
+```
+
 ---
 
 ## Post-Conversion Steps
@@ -618,3 +923,40 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ## License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Changelog
+
+### v6.0.0 (2025-02-11)
+**"Enterprise Edition" — 5 new features to reach 10/10**
+
+- **Wizard Mode** (`--wizard`) — Interactive TUI with progress bars and guided setup
+- **Parallel Batch Processing** (`--parallel N`) — Run multiple conversions concurrently
+- **Pre-Flight Validation** (`--validate-only`) — Check container readiness without converting
+- **Cloud/Remote Export** (`--export-to`) — Export to S3, NFS, or SSH destinations
+- **VM Template Creation** (`--as-template`, `--sysprep`) — Create golden images from containers
+
+### v5.0.0 (2025-02-11)
+**"Safety & Scale Edition" — 5 new features**
+
+- **Batch Conversion** (`--batch`) — Convert multiple containers from file
+- **Range Conversion** (`--range`) — Convert CT range to VM range
+- **Snapshots** (`--snapshot`) — Pre-conversion snapshots for rollback safety
+- **Auto-Rollback** (`--rollback-on-failure`) — Automatic restore on failure
+- **Configuration Profiles** (`--save-profile`, `--profile`) — Save and reuse settings
+- **Resume Capability** (`--resume`) — Resume interrupted conversions
+- **Auto-Destroy Source** (`--destroy-source`) — Remove original LXC after success
+
+### v4.0.0
+**"Foundation Edition" — Core conversion features**
+
+- Multi-distro support (Debian, Ubuntu, Alpine, RHEL, Arch)
+- BIOS & UEFI boot support
+- Integrated disk shrink
+- Dry-run mode
+- Network preservation
+- Auto-start & health checks
+- Post-conversion validation
+- Interactive & non-interactive modes
+- Smart disk space management
