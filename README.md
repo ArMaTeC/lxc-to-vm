@@ -36,7 +36,6 @@ A robust Bash toolkit that converts **Proxmox LXC containers** into fully bootab
   - [Configuration Profiles](#configuration-profiles)
   - [Resume Capability](#resume-capability)
   - [Auto-Destroy Source](#auto-destroy-source)
-- [v6.0.1 Feature Deep Dives](#v601-feature-deep-dives)
   - [Proxmox API/Cluster Integration](#proxmox-apicluster-integration)
   - [Plugin/Hook System](#pluginhook-system)
   - [Predictive Disk Size Advisor](#predictive-disk-size-advisor)
@@ -566,16 +565,48 @@ Results are shown as pass/fail with a summary count. This runs automatically —
 Convert multiple containers at once using batch files or range specifications:
 
 **Batch file format** (`conversions.txt`):
+
 ```
-# Comment lines start with #
-100 200
-101 201
-105 205
+# conversions.txt - Batch conversion file
+# Format: <CTID> <VMID> [storage] [disk_size]
+# Lines starting with # are ignored
+
+# Web servers
+100 200 local-lvm 32
+101 201 local-lvm 32
+102 202 local-lvm 32
+
+# Database servers (larger disks)
+105 205 local-lvm 100
+106 206 local-lvm 100
+
+# Minimal entry (uses defaults)
+110 210
+```
+
+Create the batch file:
+```bash
+cat > conversions.txt << 'EOF'
+# Production web servers
+100 200 local-lvm 32
+101 201 local-lvm 32
+102 202 local-lvm 32
+
+# Database servers
+105 205 local-lvm 100
+106 206 local-lvm 100
+EOF
 ```
 
 Run batch conversion:
 ```bash
 sudo ./lxc-to-vm.sh --batch conversions.txt
+```
+
+**Batch with parallel processing:**
+```bash
+# Convert 4 containers simultaneously
+sudo ./lxc-to-vm.sh --batch conversions.txt --parallel 4
 ```
 
 **Range mode** converts a sequence of CTs to VMs:
@@ -662,8 +693,6 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
 ```
 
 ---
-
-## v6.0.1 Feature Deep Dives
 
 ### Proxmox API/Cluster Integration
 
@@ -1008,6 +1037,14 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 ---
 
 ## Changelog
+
+### v6.0.1 (2025-02-13)
+**"Cluster & Intelligence Edition" — 3 major features**
+
+- **Proxmox API/Cluster Integration** (`--api-host`, `--api-token`, `--migrate-to-local`) — Run conversions from any cluster node with auto-migration
+- **Plugin/Hook System** — Custom scripts at 6 stages: pre-shrink, post-shrink, pre-convert, post-convert, health-check-failed, pre-destroy
+- **Predictive Disk Size Advisor** (`--predict-size`) — Analyze growth patterns with confidence intervals for smart disk sizing
+- **Code Standardization** — Constants, error codes, function documentation, bash ranges, shellcheck directives
 
 ### v6.0.0 (2025-02-11)
 **"Enterprise Edition" — 5 new features to reach 10/10**
