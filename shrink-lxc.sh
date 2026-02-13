@@ -1,22 +1,39 @@
-#!/usr/bin/env bash
-
+#!/bin/bash
+# shellcheck shell=bash
 # ==============================================================================
 # Proxmox LXC Disk Shrinker
-# Version: 1.0.0
-# Shrinks an LXC container's disk to current usage + 1GB headroom.
+# Version: 6.0.1
+# Shrinks an LXC container's disk to current usage + headroom.
 # Supports: LVM-thin, directory-based (raw/qcow2), and ZFS storage.
 # License: MIT
 # ==============================================================================
 
 set -euo pipefail
 
-VERSION="1.0.0"
-LOG_FILE="/var/log/shrink-lxc.log"
-HEADROOM_GB=1  # Extra space above used data
+readonly VERSION="6.0.1"
+readonly LOG_FILE="/var/log/shrink-lxc.log"
+readonly DEFAULT_HEADROOM_GB=1
 
-# ==============================================================================
+# -----------------------------------------------------------------------------
+# CONSTANTS
+# -----------------------------------------------------------------------------
+readonly MIN_DISK_GB=2
+readonly META_MARGIN_PCT=5
+readonly META_MARGIN_MIN_MB=512
+readonly REQUIRED_CMDS=(e2fsck resize2fs)
+
+# Error codes
+readonly E_INVALID_ARG=1
+readonly E_NOT_FOUND=2
+readonly E_DISK_FULL=3
+readonly E_PERMISSION=4
+readonly E_SHRINK_FAILED=5
+
+HEADROOM_GB=$DEFAULT_HEADROOM_GB  # Extra space above used data (configurable)
+
+# -----------------------------------------------------------------------------
 # HELPER FUNCTIONS
-# ==============================================================================
+# -----------------------------------------------------------------------------
 
 if [[ -t 1 ]]; then
     RED='\033[0;31m'
@@ -29,12 +46,28 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
 fi
 
+# Echo with interpretation of backslash escapes
+# Arguments:
+#   $* - Text to echo
+# Outputs: Echoed text with escape interpretation
+e() { echo -e "$*"; }
+
+# --- Logging Functions ---
+# Arguments:
+#   $* - Message to log
+# Outputs: Formatted message to stdout and log file
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 warn() { printf "${YELLOW}[!]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
 ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
-die()  { err "$*"; exit 1; }
 
+# Error exit with message
+# Arguments:
+#   $* - Error message
+# Exits with code E_INVALID_ARG
+die() { err "$*"; exit "${E_INVALID_ARG}"; }
+
+# --- Usage / Help ---
 usage() {
     cat <<USAGE
 ${BOLD}Proxmox LXC Disk Shrinker v${VERSION}${NC}
@@ -84,9 +117,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo -e "${BOLD}==========================================${NC}"
-echo -e "${BOLD}     PROXMOX LXC DISK SHRINKER v${VERSION}${NC}"
-echo -e "${BOLD}==========================================${NC}"
+e "${BOLD}==========================================${NC}"
+e "${BOLD}     PROXMOX LXC DISK SHRINKER v${VERSION}${NC}"
+e "${BOLD}==========================================${NC}"
 
 # Interactive prompt if CTID not provided
 [[ -z "$CTID" ]] && read -rp "Enter Container ID to shrink (e.g., 100): " CTID
@@ -225,16 +258,16 @@ log "Potential savings: ${SAVINGS_GB}GB"
 
 if $DRY_RUN; then
     echo ""
-    echo -e "${BOLD}=== DRY RUN — No changes will be made ===${NC}"
+    e "${BOLD}=== DRY RUN — No changes will be made ===${NC}"
     echo ""
-    echo -e "  ${BOLD}Container:${NC}    $CTID"
-    echo -e "  ${BOLD}Storage:${NC}      $STORAGE_NAME ($STORAGE_TYPE)"
-    echo -e "  ${BOLD}Current disk:${NC} ${CURRENT_SIZE_GB}GB"
-    echo -e "  ${BOLD}Used space:${NC}   ${USED_HR} (~${USED_GB}GB)"
-    echo -e "  ${BOLD}New size:${NC}     ${NEW_SIZE_GB}GB (usage + ${HEADROOM_GB}GB)"
-    echo -e "  ${BOLD}Savings:${NC}      ${SAVINGS_GB}GB"
+    e "  ${BOLD}Container:${NC}    $CTID"
+    e "  ${BOLD}Storage:${NC}      $STORAGE_NAME ($STORAGE_TYPE)"
+    e "  ${BOLD}Current disk:${NC} ${CURRENT_SIZE_GB}GB"
+    e "  ${BOLD}Used space:${NC}   ${USED_HR} (~${USED_GB}GB)"
+    e "  ${BOLD}New size:${NC}     ${NEW_SIZE_GB}GB (usage + ${HEADROOM_GB}GB)"
+    e "  ${BOLD}Savings:${NC}      ${SAVINGS_GB}GB"
     echo ""
-    echo -e "  ${BOLD}Steps that would be performed:${NC}"
+    e "  ${BOLD}Steps that would be performed:${NC}"
     echo "    1. Stop container $CTID"
     case "$STORAGE_TYPE" in
         lvmthin|lvm)
@@ -268,8 +301,8 @@ fi
 # ==============================================================================
 
 echo ""
-echo -e "${YELLOW}${BOLD}WARNING: This will shrink the disk for container $CTID${NC}"
-echo -e "  ${BOLD}Current:${NC} ${CURRENT_SIZE_GB}GB → ${BOLD}New:${NC} ${NEW_SIZE_GB}GB (saving ${SAVINGS_GB}GB)"
+e "${YELLOW}${BOLD}WARNING: This will shrink the disk for container $CTID${NC}"
+e "  ${BOLD}Current:${NC} ${CURRENT_SIZE_GB}GB → ${BOLD}New:${NC} ${NEW_SIZE_GB}GB (saving ${SAVINGS_GB}GB)"
 echo ""
 read -rp "Continue? [y/N]: " CONFIRM
 [[ "$CONFIRM" =~ ^[Yy]$ ]] || { log "Aborted by user."; $CT_WAS_RUNNING && pct start "$CTID" 2>/dev/null || true; exit 0; }
@@ -285,8 +318,10 @@ case "$STORAGE_TYPE" in
     # --------------------------------------------------------------------------
     lvmthin|lvm)
         # Resolve the LV device path
-        VG_NAME=$(pvesm path "${ROOTFS_VOL}" 2>/dev/null | sed 's|/dev/||' | cut -d'/' -f1)
-        LV_PATH=$(pvesm path "${ROOTFS_VOL}" 2>/dev/null)
+        VG_PATH=$(pvesm path "${ROOTFS_VOL}" 2>/dev/null)
+        VG_NAME="${VG_PATH#/dev/}"
+        VG_NAME="${VG_NAME%%/*}"
+        LV_PATH="$VG_PATH"
 
         if [[ -z "$LV_PATH" || ! -e "$LV_PATH" ]]; then
             die "Could not resolve LV path for $ROOTFS_VOL (got: '$LV_PATH')"
@@ -466,7 +501,7 @@ case "$STORAGE_TYPE" in
     zfspool)
         ZFS_VOL=$(pvesm path "${ROOTFS_VOL}" 2>/dev/null)
         # pvesm path returns /dev/zvol/... — convert to dataset name
-        ZFS_DATASET=$(echo "$ZFS_VOL" | sed 's|/dev/zvol/||')
+        ZFS_DATASET="${ZFS_VOL#/dev/zvol/}"
         [[ -n "$ZFS_DATASET" ]] || die "Could not determine ZFS dataset for $ROOTFS_VOL"
         log "ZFS dataset: $ZFS_DATASET"
 
@@ -518,18 +553,18 @@ if $CT_WAS_RUNNING; then
 fi
 
 echo ""
-echo -e "${GREEN}${BOLD}==========================================${NC}"
-echo -e "${GREEN}${BOLD}          SHRINK COMPLETE${NC}"
-echo -e "${GREEN}${BOLD}==========================================${NC}"
+e "${GREEN}${BOLD}==========================================${NC}"
+e "${GREEN}${BOLD}          SHRINK COMPLETE${NC}"
+e "${GREEN}${BOLD}==========================================${NC}"
 echo ""
-echo -e "  ${BOLD}Container:${NC}    $CTID"
-echo -e "  ${BOLD}Storage:${NC}      $STORAGE_NAME ($STORAGE_TYPE)"
-echo -e "  ${BOLD}Previous:${NC}     ${CURRENT_SIZE_GB}GB"
-echo -e "  ${BOLD}New size:${NC}     ${NEW_SIZE_GB}GB"
-echo -e "  ${BOLD}Saved:${NC}        ${SAVINGS_GB}GB"
-echo -e "  ${BOLD}Used space:${NC}   ${USED_HR}"
-echo -e "  ${BOLD}Log:${NC}          $LOG_FILE"
+e "  ${BOLD}Container:${NC}    $CTID"
+e "  ${BOLD}Storage:${NC}      $STORAGE_NAME ($STORAGE_TYPE)"
+e "  ${BOLD}Previous:${NC}     ${CURRENT_SIZE_GB}GB"
+e "  ${BOLD}New size:${NC}     ${NEW_SIZE_GB}GB"
+e "  ${BOLD}Saved:${NC}        ${SAVINGS_GB}GB"
+e "  ${BOLD}Used space:${NC}   ${USED_HR}"
+e "  ${BOLD}Log:${NC}          $LOG_FILE"
 echo ""
-echo -e "  ${YELLOW}Ready to convert:${NC}"
-echo -e "    ${BOLD}./lxc-to-vm.sh -c $CTID -d $NEW_SIZE_GB -s $STORAGE_NAME${NC}"
+e "  ${YELLOW}Ready to convert:${NC}"
+e "    ${BOLD}./lxc-to-vm.sh -c $CTID -d $NEW_SIZE_GB -s $STORAGE_NAME${NC}"
 echo ""
