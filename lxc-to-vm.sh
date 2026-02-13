@@ -1,20 +1,37 @@
-#!/usr/bin/env bash
-
+#!/bin/bash
+# shellcheck shell=bash
 # ==============================================================================
 # Proxmox LXC to VM Converter
-# Version: 6.0.0
-# Target OS: Debian/Ubuntu/Alpine/RHEL/Arch LXCs on Proxmox VE 7.x / 8.x
+# Version: 6.0.1
+# Target OS: Debian/Ubuntu/Alpine/RHEL/Arch LXCs on Proxmox VE 7.x / 8.x / 9.x
 # License: MIT
 # ==============================================================================
 
 set -euo pipefail
 
-VERSION="6.0.0"
-LOG_FILE="/var/log/lxc-to-vm.log"
+readonly VERSION="6.0.1"
+readonly LOG_FILE="/var/log/lxc-to-vm.log"
 
-# ==============================================================================
+# -----------------------------------------------------------------------------
+# CONSTANTS
+# -----------------------------------------------------------------------------
+readonly MIN_DISK_GB=2
+readonly DEFAULT_BRIDGE="vmbr0"
+readonly DEFAULT_DISK_FORMAT="qcow2"
+readonly DEFAULT_BIOS="seabios"
+readonly REQUIRED_CMDS=(parted kpartx rsync qemu-img)
+
+# Error codes
+readonly E_INVALID_ARG=1
+readonly E_NOT_FOUND=2
+readonly E_DISK_FULL=3
+readonly E_PERMISSION=4
+readonly E_MIGRATION=5
+readonly E_CONVERSION=6
+
+# -----------------------------------------------------------------------------
 # 0. HELPER FUNCTIONS
-# ==============================================================================
+# -----------------------------------------------------------------------------
 
 # --- Colors & Formatting ---
 if [[ -t 1 ]]; then
@@ -28,12 +45,26 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
 fi
 
+# Echo with interpretation of backslash escapes
+# Arguments:
+#   $* - Text to echo
+# Outputs: Echoed text with escape interpretation
+e() { echo -e "$*"; }
+
+# --- Logging Functions ---
+# Arguments:
+#   $* - Message to log
+# Outputs: Formatted message to stdout and log file
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 warn() { printf "${YELLOW}[!]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
 ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
-die() { err "$*"; exit 1; }
+# Error exit with message
+# Arguments:
+#   $* - Error message
+# Exits with code E_INVALID_ARG
+die() { err "$*"; exit "${E_INVALID_ARG}"; }
 
 # --- Usage / Help ---
 usage() {
@@ -46,7 +77,7 @@ Options:
   -c, --ctid <ID>        Source LXC container ID
   -v, --vmid <ID>        Target VM ID
   -s, --storage <NAME>   Proxmox storage target (e.g. local-lvm)
-  -d, --disk-size <GB>   Disk size in GB
+  -d, --disk-size <GB>   Disk size in GB (omit for predictive advisor)
   -f, --format <FMT>     Disk format: qcow2 (default) | raw | vmdk
   -b, --bridge <NAME>    Network bridge (default: vmbr0)
   -t, --temp-dir <PATH>  Working directory for temp image (default: /var/lib/vz/dump)
@@ -69,8 +100,18 @@ Options:
   --export-to <DEST>     Export VM disk after conversion (s3://bucket, nfs://host/path, ssh://host/path)
   --as-template          Convert to VM template instead of regular VM
   --sysprep              Clean template for cloning (remove SSH keys, machine-id, etc.)
+  --api-host <HOST>      Proxmox API host for cluster operations
+  --api-token <TOKEN>    API token for cluster authentication
+  --api-user <USER>      API user (default: root@pam)
+  --migrate-to-local     Auto-migrate container to local node if on remote
+  --predict-size         Use predictive advisor for disk size (analyze growth patterns)
   -h, --help             Show this help message
   -V, --version          Show version
+
+Hooks:
+  Place executable scripts in /var/lib/lxc-to-vm/hooks/ to run at stages:
+    pre-shrink, post-shrink, pre-convert, post-convert, health-check-failed, pre-destroy
+  Hooks receive CTID and VMID as arguments, with HOOK_CTID, HOOK_VMID, HOOK_STAGE env vars.
 
 Examples:
   $0                                       # Interactive mode
@@ -152,6 +193,256 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ==============================================================================
+# PROXMOX API / CLUSTER INTEGRATION
+# ==============================================================================
+
+# Check if we're in a cluster and get node info
+get_cluster_info() {
+    local ctid="$1"
+    local config_output
+    config_output=$(pct config "$ctid" 2>/dev/null) || return 1
+    
+    # Extract node from config if available (format: rootfs: storage:vol,node=X)
+    local node
+    node=$(echo "$config_output" | grep -oP 'node=\K[^,]+' || echo "")
+    
+    if [[ -n "$node" ]]; then
+        echo "$node"
+        return 0
+    fi
+    
+    # Check if we're local
+    local hostname
+    hostname=$(hostname)
+    if pvesh get /nodes/$hostname/lxc/$ctid/status/current >/dev/null 2>&1; then
+        echo "$hostname"
+        return 0
+    fi
+    
+    # Try to find which node has this container
+    local nodes
+    nodes=$(pvesh get /nodes --output-format json 2>/dev/null | grep -oP '"node":"\K[^"]+' || echo "")
+    for n in $nodes; do
+        if pvesh get /nodes/$n/lxc/$ctid/status/current >/dev/null 2>&1; then
+            echo "$n"
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# API call wrapper
+pve_api_call() {
+    local method="$1"
+    local endpoint="$2"
+    local data="${3:-}"
+    
+    if [[ -z "$API_HOST" || -z "$API_TOKEN" ]]; then
+        die "API credentials not configured. Use --api-host and --api-token"
+    fi
+    
+    local url="https://${API_HOST}:8006/api2/json${endpoint}"
+    local auth_header="Authorization: PVEAPIToken=${API_USER}!${API_TOKEN}"
+    
+    if [[ "$method" == "GET" ]]; then
+        curl -s -k -H "$auth_header" "$url" 2>/dev/null
+    else
+        curl -s -k -H "$auth_header" -X "$method" -d "$data" "$url" 2>/dev/null
+    fi
+}
+
+# Migrate container to local node
+migrate_container_to_local() {
+    local ctid="$1"
+    local target_node
+    target_node=$(get_cluster_info "$ctid") || die "Cannot determine node for container $ctid"
+    
+    local local_node
+    local_node=$(hostname)
+    
+    if [[ "$target_node" == "$local_node" ]]; then
+        log "Container $ctid is already on local node ($local_node)"
+        return 0
+    fi
+    
+    log "Container $ctid is on remote node: $target_node"
+    
+    if $MIGRATE_TO_LOCAL; then
+        log "Migrating container $ctid from $target_node to $local_node..."
+        
+        if $DRY_RUN; then
+            log "[DRY-RUN] Would migrate: pct migrate $ctid $local_node --online"
+            return 0
+        fi
+        
+        # Stop container first for migration (safer)
+        local status
+        status=$(pct status "$ctid" 2>/dev/null | awk '{print $2}')
+        if [[ "$status" == "running" ]]; then
+            log "Stopping container $ctid before migration..."
+            pct stop "$ctid"
+            sleep 2
+        fi
+        
+        # Perform migration
+        if pct migrate "$ctid" "$local_node" --restart; then
+            ok "Container $ctid migrated to $local_node"
+            sleep 3
+            return 0
+        else
+            die "Migration failed. Container $ctid is still on $target_node"
+        fi
+    else
+        warn "Container $ctid is on remote node $target_node"
+        warn "Use --migrate-to-local to automatically migrate, or run from $target_node"
+        return 1
+    fi
+}
+
+# ==============================================================================
+# PLUGIN / HOOK SYSTEM
+# ==============================================================================
+
+HOOKS_DIR="/var/lib/lxc-to-vm/hooks"
+
+run_hook() {
+    local hook_name="$1"
+    local ctid="${2:-$CTID}"
+    local vmid="${3:-$VMID}"
+    
+    local hook_script="${HOOKS_DIR}/${hook_name}"
+    
+    if [[ -x "$hook_script" ]]; then
+        log "Running hook: $hook_name"
+        export HOOK_CTID="$ctid"
+        export HOOK_VMID="$vmid"
+        export HOOK_LOG_FILE="$LOG_FILE"
+        export HOOK_STAGE="$hook_name"
+        
+        if ! "$hook_script" "$ctid" "$vmid" >> "$LOG_FILE" 2>&1; then
+            warn "Hook $hook_name exited with error (non-fatal)"
+            return 1
+        fi
+        return 0
+    fi
+    return 0
+}
+
+# Hook points:
+# - pre-shrink: Before shrinking container
+# - post-shrink: After shrinking container  
+# - pre-convert: Before starting conversion
+# - post-convert: After conversion complete
+# - health-check-failed: When health check fails
+# - pre-destroy: Before destroying source container
+
+# ==============================================================================
+# PREDICTIVE DISK SIZE ADVISOR
+# ==============================================================================
+
+analyze_growth_pattern() {
+    local ctid="$1"
+    local days_history="${2:-30}"
+    
+    # Check for pct snapshow history or log files
+    local log_entries
+    log_entries=$(grep -h "CT $ctid" /var/log/lxc-to-vm*.log /var/log/shrink-lxc*.log 2>/dev/null | tail -50 || echo "")
+    
+    if [[ -z "$log_entries" ]]; then
+        return 1
+    fi
+    
+    # Extract historical disk usage from logs
+    local usages
+    usages=$(echo "$log_entries" | grep -oP 'Used space:.*~\K[0-9]+' | sort -n)
+    
+    if [[ -z "$usages" ]]; then
+        return 1
+    fi
+    
+    local count
+    count=$(echo "$usages" | wc -l)
+    
+    if [[ "$count" -lt 3 ]]; then
+        return 1
+    fi
+    
+    # Calculate trend (simple linear regression approximation)
+    local min max avg trend
+    min=$(echo "$usages" | head -1)
+    max=$(echo "$usages" | tail -1)
+    
+    # Sum for average
+    local sum=0
+    while read -r val; do
+        sum=$((sum + val))
+    done <<< "$usages"
+    avg=$((sum / count))
+    
+    # Growth rate (GB per entry)
+    trend=$(( (max - min) / count ))
+    
+    # Calculate recommended size with confidence
+    local confidence="medium"
+    [[ "$count" -gt 10 ]] && confidence="high"
+    [[ "$count" -lt 5 ]] && confidence="low"
+    
+    # Recommendation: current + (trend * 6 months) + 3GB overhead
+    local current_usage
+    current_usage=$(pct df "$ctid" 2>/dev/null | awk '/^rootfs/{print $3}' || echo "0")
+    current_usage=$((current_usage / 1024 / 1024 / 1024))  # Convert to GB
+    
+    local recommended=$((current_usage + (trend * 6) + 3))
+    [[ "$recommended" -lt 10 ]] && recommended=10
+    
+    echo "${recommended}:${confidence}:${trend}:${min}:${max}:${avg}"
+    return 0
+}
+
+get_size_recommendation() {
+    local ctid="$1"
+    
+    log "Analyzing growth patterns for CT $ctid..."
+    
+    local analysis
+    analysis=$(analyze_growth_pattern "$ctid")
+    
+    if [[ -z "$analysis" ]]; then
+        # Fallback to current usage + headroom
+        local current_usage
+        current_usage=$(pct df "$ctid" 2>/dev/null | awk '/^rootfs/{print $3}' || echo "0")
+        current_usage=$((current_usage / 1024 / 1024 / 1024))
+        
+        local recommended=$((current_usage + 5))
+        [[ "$recommended" -lt 10 ]] && recommended=10
+        
+        e "  ${YELLOW}No historical data available${NC}"
+        e "  ${BOLD}Recommendation:${NC} ${recommended}GB (current ${current_usage}GB + 5GB headroom)"
+        echo "$recommended"
+        return 0
+    fi
+    
+    local recommended confidence trend min max avg
+    recommended="${analysis%%:*}"
+    confidence="${analysis#*:}"
+    confidence="${confidence%%:*}"
+    trend="${analysis#*:*:*}"
+    trend="${trend%%:*}"
+    
+    local confidence_emoji="🟡"
+    [[ "$confidence" == "high" ]] && confidence_emoji="🟢"
+    [[ "$confidence" == "low" ]] && confidence_emoji="🔴"
+    
+    e "  ${confidence_emoji} ${BOLD}Confidence:${NC} ${confidence^^}"
+    e "  ${BOLD}Historical range:${NC} ${min}GB - ${max}GB (avg: ${avg}GB)"
+    e "  ${BOLD}Growth trend:${NC} ~${trend}GB per conversion"
+    e "  ${GREEN}${BOLD}Recommendation:${NC} ${recommended}GB"
+    
+    echo "$recommended"
+}
+
+# ==============================================================================
 # PROFILE MANAGEMENT
 # ==============================================================================
 
@@ -163,14 +454,14 @@ ensure_profile_dir() {
 
 list_profiles() {
     ensure_profile_dir
-    echo -e "${BOLD}Available profiles:${NC}"
+    e "${BOLD}Available profiles:${NC}"
     local found=false
     for profile in "$PROFILE_DIR"/*.conf; do
         [[ -f "$profile" ]] || continue
         found=true
         local name=$(basename "$profile" .conf)
         local created=$(stat -c %y "$profile" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
-        echo -e "  ${GREEN}•${NC} ${BOLD}$name${NC} (created: $created)"
+        e "  ${GREEN}•${NC} ${BOLD}$name${NC} (created: $created)"
     done
     $found || echo "  (none)"
     exit 0
@@ -344,10 +635,10 @@ process_batch_file() {
         local batch_ctid=$(echo "$line" | awk '{print $1}')
         local batch_vmid=$(echo "$line" | awk '{print $2}')
 
-        [[ -z "$batch_ctid" || -z "$batch_vmid" ]] && {
+        if [[ -z "$batch_ctid" || -z "$batch_vmid" ]]; then
             warn "Skipping invalid line $line_num: $line"
             continue
-        }
+        fi
 
         echo ""
         log "========================================"
@@ -364,29 +655,29 @@ process_batch_file() {
     done < "$batch_file"
 
     echo ""
-    echo -e "${GREEN}${BOLD}==========================================${NC}"
-    echo -e "${GREEN}${BOLD}         BATCH CONVERSION COMPLETE${NC}"
-    echo -e "${GREEN}${BOLD}==========================================${NC}"
-    echo -e "  ${BOLD}Successful:${NC} $success_count"
-    echo -e "  ${BOLD}Failed:${NC}     $fail_count"
-    echo -e "  ${BOLD}Total:${NC}      $((success_count + fail_count))"
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "${GREEN}${BOLD}         BATCH CONVERSION COMPLETE${NC}"
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "  ${BOLD}Successful:${NC} $success_count"
+    e "  ${BOLD}Failed:${NC}     $fail_count"
+    e "  ${BOLD}Total:${NC}      $((success_count + fail_count))"
     exit 0
 }
 
 process_range() {
     local range_spec="$1"
     # Format: 100-110:200-210 (CT range : VM range)
-    local ct_range=$(echo "$range_spec" | cut -d':' -f1)
-    local vm_range=$(echo "$range_spec" | cut -d':' -f2)
+    local ct_range="${range_spec%%:*}"
+    local vm_range="${range_spec#*:}"
 
-    local ct_start=$(echo "$ct_range" | cut -d'-' -f1)
-    local ct_end=$(echo "$ct_range" | cut -d'-' -f2)
-    local vm_start=$(echo "$vm_range" | cut -d'-' -f1)
-    local vm_end=$(echo "$vm_range" | cut -d'-' -f2)
+    local ct_start="${ct_range%%-*}"
+    local ct_end="${ct_range#*-}"
+    local vm_start="${vm_range%%-*}"
+    local vm_end="${vm_range#*-}"
 
-    [[ -z "$ct_start" || -z "$ct_end" || -z "$vm_start" || -z "$vm_end" ]] && {
+    if [[ -z "$ct_start" || -z "$ct_end" || -z "$vm_start" || -z "$vm_end" ]]; then
         die "Invalid range format. Use: --range START-END:START-END (e.g., 100-110:200-210)"
-    }
+    fi
 
     local count=$((ct_end - ct_start + 1))
     local vm_count=$((vm_end - vm_start + 1))
@@ -415,12 +706,12 @@ process_range() {
     done
 
     echo ""
-    echo -e "${GREEN}${BOLD}==========================================${NC}"
-    echo -e "${GREEN}${BOLD}         RANGE CONVERSION COMPLETE${NC}"
-    echo -e "${GREEN}${BOLD}==========================================${NC}"
-    echo -e "  ${BOLD}Successful:${NC} $success_count"
-    echo -e "  ${BOLD}Failed:${NC}     $fail_count"
-    echo -e "  ${BOLD}Total:${NC}      $((success_count + fail_count))"
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "${GREEN}${BOLD}         RANGE CONVERSION COMPLETE${NC}"
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "  ${BOLD}Successful:${NC} $success_count"
+    e "  ${BOLD}Failed:${NC}     $fail_count"
+    e "  ${BOLD}Total:${NC}      $((success_count + fail_count))"
     exit 0
 }
 
@@ -482,6 +773,7 @@ CREATE_SNAPSHOT=false ROLLBACK_ON_FAILURE=false DESTROY_SOURCE=false RESUME_MODE
 BATCH_FILE="" RANGE_SPEC="" PROFILE_NAME="" SAVE_PROFILE_NAME=""
 WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false
 EXPORT_DEST="" AS_TEMPLATE=false SYSPREP=false
+API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -511,6 +803,11 @@ while [[ $# -gt 0 ]]; do
         --export-to)     EXPORT_DEST="$2"; shift 2 ;;
         --as-template)   AS_TEMPLATE=true;  shift ;;
         --sysprep)       SYSPREP=true;      shift ;;
+        --api-host)      API_HOST="$2";     shift 2 ;;
+        --api-token)     API_TOKEN="$2";    shift 2 ;;
+        --api-user)      API_USER="$2";     shift 2 ;;
+        --migrate-to-local) MIGRATE_TO_LOCAL=true; shift ;;
+        --predict-size)  PREDICT_SIZE=true; shift ;;
         --list-profiles) list_profiles ;;
         -h|--help)       usage ;;
         -V|--version)    echo "v${VERSION}"; exit 0 ;;
@@ -558,7 +855,9 @@ if [[ -n "$SAVE_PROFILE_NAME" ]]; then
     # Save current settings as profile
     save_profile "$SAVE_PROFILE_NAME"
     # If no CTID/VMID specified, exit after saving
-    [[ -z "$CTID" || -z "$VMID" ]] && exit 0
+    if [[ -z "$CTID" || -z "$VMID" ]]; then
+        exit 0
+    fi
 fi
 
 # Handle resume mode check
@@ -612,29 +911,29 @@ spinner() {
 # Run wizard mode
 run_wizard() {
     echo ""
-    echo -e "${BOLD}==========================================${NC}"
-    echo -e "${BOLD}   LXC TO VM CONVERTER - WIZARD MODE${NC}"
-    echo -e "${BOLD}==========================================${NC}"
+    e "${BOLD}==========================================${NC}"
+    e "${BOLD}   LXC TO VM CONVERTER - WIZARD MODE${NC}"
+    e "${BOLD}==========================================${NC}"
     echo ""
 
     # Source CTID
     [[ -z "$CTID" ]] && read -rp "Enter Source Container ID (e.g., 100): " CTID
 
     # Target VMID
-    [[ -z "$VMID" ]] && {
+    if [[ -z "$VMID" ]]; then
         local suggested_vmid=$((CTID + 100))
         read -rp "Enter Target VM ID [${suggested_vmid}]: " VMID
         [[ -z "$VMID" ]] && VMID="$suggested_vmid"
-    }
+    fi
 
     # Storage
-    [[ -z "$STORAGE" ]] && {
+    if [[ -z "$STORAGE" ]]; then
         echo ""
-        echo -e "${BOLD}Available storage:${NC}"
+        e "${BOLD}Available storage:${NC}"
         pvesm status | awk 'NR>1{print "  - " $1 " (" $2 ")"}'
         echo ""
         read -rp "Enter Target Storage Name (e.g., local-lvm): " STORAGE
-    }
+    fi
 
     # Shrink option
     if ! $SHRINK_FIRST; then
@@ -650,7 +949,7 @@ run_wizard() {
 
     # Additional options
     echo ""
-    echo -e "${BOLD}Additional Options:${NC}"
+    e "${BOLD}Additional Options:${NC}"
     read -rp "Use UEFI boot? [y/N]: " uefi_choice
     [[ "$uefi_choice" =~ ^[Yy] ]] && BIOS_TYPE="ovmf"
 
@@ -675,19 +974,19 @@ run_wizard() {
 
     # Summary
     echo ""
-    echo -e "${BOLD}========================================${NC}"
-    echo -e "${BOLD}Conversion Summary:${NC}"
-    echo -e "  Source CT:    ${GREEN}$CTID${NC}"
-    echo -e "  Target VM:    ${GREEN}$VMID${NC}"
-    echo -e "  Storage:      ${GREEN}$STORAGE${NC}"
-    echo -e "  Shrink:       ${GREEN}$SHRINK_FIRST${NC}"
-    [[ -n "$DISK_SIZE" ]] && echo -e "  Disk Size:    ${GREEN}${DISK_SIZE}GB${NC}"
-    echo -e "  UEFI:         ${GREEN}$([[ "$BIOS_TYPE" == "ovmf" ]] && echo 'Yes' || echo 'No')${NC}"
-    echo -e "  Keep Network: ${GREEN}$KEEP_NETWORK${NC}"
-    echo -e "  Snapshot:     ${GREEN}$CREATE_SNAPSHOT${NC}"
-    echo -e "  Auto-start:   ${GREEN}$AUTO_START${NC}"
-    echo -e "  Destroy Src:  ${GREEN}$DESTROY_SOURCE${NC}"
-    echo -e "${BOLD}========================================${NC}"
+    e "${BOLD}========================================${NC}"
+    e "${BOLD}Conversion Summary:${NC}"
+    e "  Source CT:    ${GREEN}$CTID${NC}"
+    e "  Target VM:    ${GREEN}$VMID${NC}"
+    e "  Storage:      ${GREEN}$STORAGE${NC}"
+    e "  Shrink:       ${GREEN}$SHRINK_FIRST${NC}"
+    [[ -n "$DISK_SIZE" ]] && e "  Disk Size:    ${GREEN}${DISK_SIZE}GB${NC}"
+    e "  UEFI:         ${GREEN}$([[ "$BIOS_TYPE" == "ovmf" ]] && echo 'Yes' || echo 'No')${NC}"
+    e "  Keep Network: ${GREEN}$KEEP_NETWORK${NC}"
+    e "  Snapshot:     ${GREEN}$CREATE_SNAPSHOT${NC}"
+    e "  Auto-start:   ${GREEN}$AUTO_START${NC}"
+    e "  Destroy Src:  ${GREEN}$DESTROY_SOURCE${NC}"
+    e "${BOLD}========================================${NC}"
     echo ""
     read -rp "Proceed with conversion? [Y/n]: " confirm
     [[ -n "$confirm" && ! "$confirm" =~ ^[Yy] ]] && die "Conversion cancelled by user"
@@ -701,27 +1000,27 @@ run_preflight_validation() {
     local check_ctid="${1:-$CTID}"
     [[ -z "$check_ctid" ]] && die "Container ID required for validation"
 
-    echo -e "${BOLD}==========================================${NC}"
-    echo -e "${BOLD}   PRE-FLIGHT VALIDATION${NC}"
-    echo -e "${BOLD}==========================================${NC}"
+    e "${BOLD}==========================================${NC}"
+    e "${BOLD}   PRE-FLIGHT VALIDATION${NC}"
+    e "${BOLD}==========================================${NC}"
     echo ""
 
     local checks_passed=0
     local checks_total=0
 
     check_pass() {
-        echo -e "  ${GREEN}[✓]${NC} $1"
+        e "  ${GREEN}[✓]${NC} $1"
         ((checks_passed++))
         ((checks_total++))
     }
 
     check_fail() {
-        echo -e "  ${RED}[✗]${NC} $1"
+        e "  ${RED}[✗]${NC} $1"
         ((checks_total++))
     }
 
     check_warn() {
-        echo -e "  ${YELLOW}[!]${NC} $1"
+        e "  ${YELLOW}[!]${NC} $1"
         ((checks_total++))
     }
 
@@ -731,7 +1030,7 @@ run_preflight_validation() {
     else
         check_fail "Container $check_ctid does not exist"
         echo ""
-        echo -e "${RED}Validation failed. Cannot proceed.${NC}"
+        e "${RED}Validation failed. Cannot proceed.${NC}"
         return 1
     fi
 
@@ -806,16 +1105,16 @@ run_preflight_validation() {
     fi
 
     echo ""
-    echo -e "${BOLD}========================================${NC}"
-    echo -e "Validation: ${checks_passed}/${checks_total} checks passed"
-    echo -e "${BOLD}========================================${NC}"
+    e "${BOLD}========================================${NC}"
+    e "Validation: ${checks_passed}/${checks_total} checks passed"
+    e "${BOLD}========================================${NC}"
     echo ""
 
     if [[ "$checks_passed" -eq "$checks_total" ]]; then
-        echo -e "${GREEN}Container $check_ctid is ready for conversion!${NC}"
+        e "${GREEN}Container $check_ctid is ready for conversion!${NC}"
         return 0
     else
-        echo -e "${YELLOW}Container $check_ctid has some issues. Review warnings above.${NC}"
+        e "${YELLOW}Container $check_ctid has some issues. Review warnings above.${NC}"
         return 1
     fi
 }
@@ -876,10 +1175,10 @@ process_batch_parallel() {
     wait
 
     echo ""
-    echo -e "${GREEN}${BOLD}==========================================${NC}"
-    echo -e "${GREEN}${BOLD}         BATCH CONVERSION COMPLETE${NC}"
-    echo -e "${GREEN}${BOLD}==========================================${NC}"
-    echo -e "  ${BOLD}Total:${NC}      $total"
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "${GREEN}${BOLD}         BATCH CONVERSION COMPLETE${NC}"
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "  ${BOLD}Total:${NC}      $total"
     echo ""
 }
 
@@ -1006,9 +1305,9 @@ run_sysprep() {
 # 2. SETUP & CHECKS
 # ==============================================================================
 
-echo -e "${BOLD}==========================================${NC}"
-echo -e "${BOLD}   PROXMOX LXC TO VM CONVERTER v${VERSION}${NC}"
-echo -e "${BOLD}==========================================${NC}"
+e "${BOLD}==========================================${NC}"
+e "${BOLD}   PROXMOX LXC TO VM CONVERTER v${VERSION}${NC}"
+e "${BOLD}==========================================${NC}"
 
 # Check Dependencies
 ensure_dependency parted
@@ -1234,26 +1533,26 @@ fi
 # --- Dry-run summary ---
 if $DRY_RUN; then
     echo ""
-    echo -e "${BOLD}=== DRY RUN — No changes will be made ===${NC}"
+    e "${BOLD}=== DRY RUN — No changes will be made ===${NC}"
     echo ""
-    echo -e "  ${BOLD}Source CT:${NC}    $CTID (status: ${CT_STATUS:-unknown})"
-    echo -e "  ${BOLD}Target VM:${NC}   $VMID"
-    echo -e "  ${BOLD}Storage:${NC}     $STORAGE"
-    echo -e "  ${BOLD}Disk:${NC}        ${DISK_SIZE}GB ($DISK_FORMAT)"
-    echo -e "  ${BOLD}Firmware:${NC}    $BIOS_TYPE"
-    echo -e "  ${BOLD}Bridge:${NC}      $BRIDGE"
-    echo -e "  ${BOLD}Keep net:${NC}    $KEEP_NETWORK"
-    echo -e "  ${BOLD}Auto-start:${NC}  $AUTO_START"
-    echo -e "  ${BOLD}Snapshot:${NC}    $CREATE_SNAPSHOT"
-    echo -e "  ${BOLD}Rollback:${NC}    $ROLLBACK_ON_FAILURE"
-    echo -e "  ${BOLD}Destroy source:${NC} $DESTROY_SOURCE"
-    echo -e "  ${BOLD}Resume mode:${NC} $RESUME_MODE"
+    e "  ${BOLD}Source CT:${NC}    $CTID (status: ${CT_STATUS:-unknown})"
+    e "  ${BOLD}Target VM:${NC}   $VMID"
+    e "  ${BOLD}Storage:${NC}     $STORAGE"
+    e "  ${BOLD}Disk:${NC}        ${DISK_SIZE}GB ($DISK_FORMAT)"
+    e "  ${BOLD}Firmware:${NC}    $BIOS_TYPE"
+    e "  ${BOLD}Bridge:${NC}      $BRIDGE"
+    e "  ${BOLD}Keep net:${NC}    $KEEP_NETWORK"
+    e "  ${BOLD}Auto-start:${NC}  $AUTO_START"
+    e "  ${BOLD}Snapshot:${NC}    $CREATE_SNAPSHOT"
+    e "  ${BOLD}Rollback:${NC}    $ROLLBACK_ON_FAILURE"
+    e "  ${BOLD}Destroy source:${NC} $DESTROY_SOURCE"
+    e "  ${BOLD}Resume mode:${NC} $RESUME_MODE"
     echo ""
     # Show LXC config
     LXC_MEM=$(pct config "$CTID" | awk '/^memory:/{print $2}')
     LXC_CORES=$(pct config "$CTID" | awk '/^cores:/{print $2}')
-    echo -e "  ${BOLD}LXC Memory:${NC}  ${LXC_MEM:-2048}MB"
-    echo -e "  ${BOLD}LXC Cores:${NC}   ${LXC_CORES:-2}"
+    e "  ${BOLD}LXC Memory:${NC}  ${LXC_MEM:-2048}MB"
+    e "  ${BOLD}LXC Cores:${NC}   ${LXC_CORES:-2}"
     echo ""
     # Space check
     DEFAULT_WORK_BASE="/var/lib/vz/dump"
@@ -1261,17 +1560,17 @@ if $DRY_RUN; then
     REQUIRED_MB=$(( (DISK_SIZE + 1) * 1024 ))
     AVAIL_MB=$(df -BM --output=avail "$WORK_CHECK" 2>/dev/null | tail -1 | tr -d ' M')
     if [[ "${AVAIL_MB:-0}" -ge "$REQUIRED_MB" ]]; then
-        echo -e "  ${GREEN}[✓]${NC} Disk space OK: ${AVAIL_MB}MB available (need ${REQUIRED_MB}MB) in $WORK_CHECK"
+        e "  ${GREEN}[✓]${NC} Disk space OK: ${AVAIL_MB}MB available (need ${REQUIRED_MB}MB) in $WORK_CHECK"
     else
-        echo -e "  ${RED}[✗]${NC} Insufficient space: ${AVAIL_MB:-0}MB available (need ${REQUIRED_MB}MB) in $WORK_CHECK"
+        e "  ${RED}[✗]${NC} Insufficient space: ${AVAIL_MB:-0}MB available (need ${REQUIRED_MB}MB) in $WORK_CHECK"
     fi
     echo ""
-    echo -e "  ${BOLD}Shrink:${NC}      $SHRINK_FIRST"
-    echo -e "  ${BOLD}Snapshot:${NC}     $CREATE_SNAPSHOT"
-    echo -e "  ${BOLD}Rollback:${NC}      $ROLLBACK_ON_FAILURE"
-    echo -e "  ${BOLD}Destroy source:${NC}  $DESTROY_SOURCE"
+    e "  ${BOLD}Shrink:${NC}      $SHRINK_FIRST"
+    e "  ${BOLD}Snapshot:${NC}     $CREATE_SNAPSHOT"
+    e "  ${BOLD}Rollback:${NC}      $ROLLBACK_ON_FAILURE"
+    e "  ${BOLD}Destroy source:${NC}  $DESTROY_SOURCE"
     echo ""
-    echo -e "  ${BOLD}Steps that would be performed:${NC}"
+    e "  ${BOLD}Steps that would be performed:${NC}"
     if $CREATE_SNAPSHOT; then
         echo "    -0. Create snapshot 'pre-conversion' for rollback safety"
     fi
@@ -1331,9 +1630,9 @@ pick_work_dir() {
 
     echo "" >&2
     warn "Insufficient space in $base: ${avail_mb}MB available, ${REQUIRED_MB}MB required." >&2
-    echo -e "  ${YELLOW}Note:${NC} The script needs filesystem space for a temporary ${DISK_SIZE}GB raw image." >&2
-    echo -e "  ${YELLOW}      ${NC} LVM/ZFS storage (e.g. local-lvm) cannot be used directly as a working directory." >&2
-    echo -e "  ${YELLOW}      ${NC} The temp image is imported to your target storage after creation." >&2
+    e "  ${YELLOW}Note:${NC} The script needs filesystem space for a temporary ${DISK_SIZE}GB raw image." >&2
+    e "  ${YELLOW}      ${NC} LVM/ZFS storage (e.g. local-lvm) cannot be used directly as a working directory." >&2
+    e "  ${YELLOW}      ${NC} The temp image is imported to your target storage after creation." >&2
 
     # Non-interactive: if --temp-dir was explicitly given and it's too small, fail hard
     if [[ -n "$WORK_DIR" ]]; then
@@ -1370,9 +1669,9 @@ pick_work_dir() {
 
     # Multiple candidates — show numbered menu
     echo "" >&2
-    echo -e "${BOLD}Available mount points with sufficient space (>${REQUIRED_MB}MB):${NC}" >&2
+    e "${BOLD}Available mount points with sufficient space (>${REQUIRED_MB}MB):${NC}" >&2
     for i in "${!candidates_mp[@]}"; do
-        echo -e "  ${GREEN}[$((i+1))]${NC} ${BOLD}${candidates_mp[$i]}${NC}  — ${candidates_avail[$i]}MB free" >&2
+        e "  ${GREEN}[$((i+1))]${NC} ${BOLD}${candidates_mp[$i]}${NC}  — ${candidates_avail[$i]}MB free" >&2
     done
 
     echo "" >&2
@@ -1439,7 +1738,7 @@ if [[ "$BIOS_TYPE" == "ovmf" ]]; then
     LOOP_MAP="/dev/mapper/$(basename "$LOOP_DEV")p2"
 
     # Wait for device nodes
-    for i in $(seq 1 10); do
+    for ((i=1; i<=10; i++)); do
         [[ -b "$LOOP_MAP" && -b "$EFI_PART" ]] && break
         sleep 0.5
     done
@@ -1465,7 +1764,7 @@ else
     kpartx -a "$LOOP_DEV"
     LOOP_MAP="/dev/mapper/$(basename "$LOOP_DEV")p1"
 
-    for i in $(seq 1 10); do
+    for ((i=1; i<=10; i++)); do
         [[ -b "$LOOP_MAP" ]] && break
         sleep 0.5
     done
@@ -1789,14 +2088,14 @@ sync
 sleep 2
 
 # Detach partition mapping (retry up to 5 times for large disks)
-for attempt in $(seq 1 5); do
+for ((attempt=1; attempt<=5; attempt++)); do
     kpartx -d "$LOOP_DEV" 2>/dev/null && break
     warn "kpartx -d attempt $attempt failed, retrying in 3s..."
     sleep 3
 done
 
 # Detach loop device (retry up to 5 times)
-for attempt in $(seq 1 5); do
+for ((attempt=1; attempt<=5; attempt++)); do
     losetup -d "$LOOP_DEV" 2>/dev/null && break
     warn "losetup -d attempt $attempt failed, retrying in 3s..."
     sleep 3
@@ -1914,7 +2213,7 @@ if $AUTO_START; then
     # Wait for QEMU guest agent (up to 120 seconds)
     log "Waiting for VM to boot and guest agent to respond (up to 120s)..."
     AGENT_OK=false
-    for i in $(seq 1 24); do
+    for ((i=1; i<=24; i++)); do
         if qm agent "$VMID" ping >/dev/null 2>&1; then
             AGENT_OK=true
             break
@@ -1959,34 +2258,34 @@ fi
 # ==============================================================================
 
 echo ""
-echo -e "${GREEN}${BOLD}==========================================${NC}"
-echo -e "${GREEN}${BOLD}         CONVERSION COMPLETE${NC}"
-echo -e "${GREEN}${BOLD}==========================================${NC}"
+e "${GREEN}${BOLD}==========================================${NC}"
+e "${GREEN}${BOLD}         CONVERSION COMPLETE${NC}"
+e "${GREEN}${BOLD}==========================================${NC}"
 echo ""
-echo -e "  ${BOLD}VM ID:${NC}       $VMID"
-echo -e "  ${BOLD}Memory:${NC}      ${MEMORY}MB"
-echo -e "  ${BOLD}Cores:${NC}       $CORES"
-echo -e "  ${BOLD}Disk:${NC}        ${DISK_SIZE}GB ($DISK_FORMAT)"
-echo -e "  ${BOLD}Firmware:${NC}    $BIOS_TYPE"
-echo -e "  ${BOLD}Distro:${NC}      $DISTRO_FAMILY (${DISTRO_ID:-unknown})"
-echo -e "  ${BOLD}Network:${NC}     $($KEEP_NETWORK && echo 'preserved' || echo 'DHCP on ens18') (bridge: $BRIDGE)"
-echo -e "  ${BOLD}Snapshot:${NC}    $([[ "$CREATE_SNAPSHOT" == "true" ]] && echo 'created' || echo 'none')"
-echo -e "  ${BOLD}Destroy source:${NC}  $DESTROY_SOURCE"
-echo -e "  ${BOLD}Validation:${NC}  ${CHECKS_PASSED}/${CHECKS_TOTAL} checks passed"
-echo -e "  ${BOLD}Log:${NC}         $LOG_FILE"
+e "  ${BOLD}VM ID:${NC}       $VMID"
+e "  ${BOLD}Memory:${NC}      ${MEMORY}MB"
+e "  ${BOLD}Cores:${NC}       $CORES"
+e "  ${BOLD}Disk:${NC}        ${DISK_SIZE}GB ($DISK_FORMAT)"
+e "  ${BOLD}Firmware:${NC}    $BIOS_TYPE"
+e "  ${BOLD}Distro:${NC}      $DISTRO_FAMILY (${DISTRO_ID:-unknown})"
+e "  ${BOLD}Network:${NC}     $($KEEP_NETWORK && echo 'preserved' || echo 'DHCP on ens18') (bridge: $BRIDGE)"
+e "  ${BOLD}Snapshot:${NC}    $([[ "$CREATE_SNAPSHOT" == "true" ]] && echo 'created' || echo 'none')"
+e "  ${BOLD}Destroy source:${NC}  $DESTROY_SOURCE"
+e "  ${BOLD}Validation:${NC}  ${CHECKS_PASSED}/${CHECKS_TOTAL} checks passed"
+e "  ${BOLD}Log:${NC}         $LOG_FILE"
 echo ""
 
 # Clear resume state on successful conversion
 clear_resume_state "$CTID" "$VMID"
 echo ""
 if ! $AUTO_START; then
-    echo -e "  ${YELLOW}Next steps:${NC}"
-    echo -e "    1. Review VM config:  ${BOLD}qm config $VMID${NC}"
-    echo -e "    2. Start the VM:      ${BOLD}qm start $VMID${NC}"
-    echo -e "    3. Open console:      ${BOLD}qm terminal $VMID -iface serial0${NC}"
+    e "  ${YELLOW}Next steps:${NC}"
+    e "    1. Review VM config:  ${BOLD}qm config $VMID${NC}"
+    e "    2. Start the VM:      ${BOLD}qm start $VMID${NC}"
+    e "    3. Open console:      ${BOLD}qm terminal $VMID -iface serial0${NC}"
 else
-    echo -e "  ${GREEN}VM $VMID is running.${NC}"
-    echo -e "  Open console: ${BOLD}qm terminal $VMID -iface serial0${NC}"
+    e "  ${GREEN}VM $VMID is running.${NC}"
+    e "  Open console: ${BOLD}qm terminal $VMID -iface serial0${NC}"
 fi
 echo ""
 
