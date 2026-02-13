@@ -36,7 +36,10 @@ A robust Bash toolkit that converts **Proxmox LXC containers** into fully bootab
   - [Configuration Profiles](#configuration-profiles)
   - [Resume Capability](#resume-capability)
   - [Auto-Destroy Source](#auto-destroy-source)
-- [v6.0.0 Feature Deep Dives](#v600-feature-deep-dives)
+- [v6.0.1 Feature Deep Dives](#v601-feature-deep-dives)
+  - [Proxmox API/Cluster Integration](#proxmox-apicluster-integration)
+  - [Plugin/Hook System](#pluginhook-system)
+  - [Predictive Disk Size Advisor](#predictive-disk-size-advisor)
   - [Wizard Mode (--wizard)](#wizard-mode---wizard)
   - [Parallel Batch Processing (--parallel)](#parallel-batch-processing---parallel)
   - [Pre-Flight Validation (--validate-only)](#pre-flight-validation---validate-only)
@@ -124,7 +127,7 @@ Distro is auto-detected from `/etc/os-release` inside the container. The script 
 
 | Requirement | Details |
 |---|---|
-| **Proxmox VE** | Version 7.x or 8.x |
+| **Proxmox VE** | Version 7.x or 8.x or 9.x|
 | **Source LXC** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, or Arch based container |
 | **Root access** | Scripts must run as `root` on the Proxmox host |
 | **Free disk space** | Filesystem space ≥ disk image size (LVM/ZFS storage cannot be used as temp space — see [Disk Space Management](#disk-space-management)) |
@@ -182,7 +185,7 @@ sudo ./lxc-to-vm.sh
 
 ```
 ==========================================
-   PROXMOX LXC TO VM CONVERTER v6.0.0
+   PROXMOX LXC TO VM CONVERTER v6.0.1
 ==========================================
 Enter Source Container ID (e.g., 100): 100
 Enter New VM ID (e.g., 200): 200
@@ -660,7 +663,86 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
 
 ---
 
-## v6.0.0 Feature Deep Dives
+## v6.0.1 Feature Deep Dives
+
+### Proxmox API/Cluster Integration
+
+Run conversions from any node in a Proxmox cluster, with automatic container migration:
+
+```bash
+# Check container location and auto-migrate to local node
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --migrate-to-local
+
+# Use API token for remote cluster operations
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
+  --api-host pve1.example.com \
+  --api-token "12345678-1234-1234-1234-123456789abc" \
+  --api-user "root@pam"
+```
+
+Features:
+- **Auto-detect container node** — finds which cluster node hosts the container
+- **Migrate to local** — automatically migrates container to current node before conversion
+- **API authentication** — supports token-based auth for cluster-wide operations
+
+### Plugin/Hook System
+
+Inject custom scripts at conversion stages for integration with Ansible, cloud-init, or custom workflows:
+
+```bash
+# Create hook directory
+sudo mkdir -p /var/lib/lxc-to-vm/hooks
+
+# Pre-conversion hook (e.g., notify monitoring)
+sudo tee /var/lib/lxc-to-vm/hooks/pre-convert << 'EOF'
+#!/bin/bash
+curl -X POST https://monitoring.example.com/alert \
+  -d "ctid=$HOOK_CTID&vmid=$HOOK_VMID&stage=$HOOK_STAGE"
+EOF
+sudo chmod +x /var/lib/lxc-to-vm/hooks/pre-convert
+
+# Post-conversion hook (e.g., trigger Ansible playbook)
+sudo tee /var/lib/lxc-to-vm/hooks/post-convert << 'EOF'
+#!/bin/bash
+ansible-playbook /opt/playbooks/configure-vm.yml \
+  -e "vmid=$HOOK_VMID" \
+  -e "ctid=$HOOK_CTID"
+EOF
+sudo chmod +x /var/lib/lxc-to-vm/hooks/post-convert
+```
+
+**Available hook points:**
+- `pre-shrink` — Before shrinking container disk
+- `post-shrink` — After shrinking completes
+- `pre-convert` — Before starting conversion
+- `post-convert` — After conversion completes successfully
+- `health-check-failed` — When VM health checks fail
+- `pre-destroy` — Before destroying source container
+
+**Environment variables available to hooks:**
+- `HOOK_CTID` — Source container ID
+- `HOOK_VMID` — Target VM ID
+- `HOOK_STAGE` — Current hook name
+- `HOOK_LOG_FILE` — Path to conversion log
+
+### Predictive Disk Size Advisor
+
+Analyze historical growth patterns to recommend optimal disk sizes:
+
+```bash
+# Use predictive advisor instead of manual disk size
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --predict-size
+```
+
+Output shows:
+- Confidence level (🟢 high / 🟡 medium / 🔴 low) based on data points
+- Historical usage range and average
+- Growth trend (GB per conversion)
+- Recommended size with 6-month growth projection + headroom
+
+If no historical data exists, falls back to `current usage + 5GB`.
+
+---
 
 ### Wizard Mode (--wizard)
 
