@@ -2276,21 +2276,21 @@ case "$DISTRO_FAMILY" in
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_EFI
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus
+apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --recheck --no-nvram --force --removable
 update-grub
-systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service 2>/dev/null || true
+systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service qemu-guest-agent.service 2>/dev/null || true
 DEBIAN_EFI
         else
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_BIOS
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus
+apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent
 grub-install --target=i386-pc --recheck --force "${LOOP_DEV}"
 update-grub
-systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service 2>/dev/null || true
+systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service qemu-guest-agent.service 2>/dev/null || true
 DEBIAN_BIOS
         fi
         ;;
@@ -2452,6 +2452,16 @@ fi
 log "Importing disk to $STORAGE (format=$DISK_FORMAT)..."
 IMPORT_OUTPUT=$(qm importdisk "$VMID" "$IMAGE_FILE" "$STORAGE" --format "$DISK_FORMAT" 2>&1)
 echo "$IMPORT_OUTPUT" >> "$LOG_FILE"
+
+# Surface host-side thin-LVM warnings clearly so they are not confused with
+# conversion failures. These warnings reference other LVs and should be fixed
+# on the Proxmox host separately.
+if echo "$IMPORT_OUTPUT" | grep -qE 'Thin volume .* maps .* while the size is only'; then
+    warn "Detected host LVM-thin mapping warning(s) during import. This is a host storage issue, not a VM conversion logic error."
+    THIN_WARN_LVS=$(echo "$IMPORT_OUTPUT" | awk '/Thin volume /{for(i=1;i<=NF;i++){if($i=="volume"){print $(i+1)}}}' | sort -u | tr '\n' ' ')
+    [[ -n "$THIN_WARN_LVS" ]] && warn "Affected LV(s): $THIN_WARN_LVS"
+    warn "Run host checks (outside this script): lvs -a -o+seg_monitor && lvdisplay -m <LV>"
+fi
 log "Import complete."
 
 # Discover the imported disk reference from the VM config (shows as unused0)
