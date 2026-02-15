@@ -2370,7 +2370,7 @@ if grub-install --target=i386-pc --recheck --force --skip-fs-probe "${LOOP_DEV}"
 elif grub-install --target=i386-pc --boot-directory=/boot --force --skip-fs-probe "${LOOP_DEV}"; then
     GRUB_INSTALL_OK=1
 fi
-if [ "$GRUB_INSTALL_OK" -ne 1 ]; then
+if [ "\$GRUB_INSTALL_OK" -ne 1 ]; then
     echo "chroot-bios-grub-install-failed" > /tmp/lxc-to-vm-grub-bios-fallback.flag
 fi
 # Force rw root remount on boot. Some converted guests can otherwise remain on
