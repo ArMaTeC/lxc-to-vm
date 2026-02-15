@@ -251,6 +251,7 @@ Options:
   --api-user <USER>      API user (default: root@pam)
   --migrate-to-local     Auto-migrate container to local node if on remote
   --predict-size         Use predictive advisor for disk size (analyze growth patterns)
+  --no-auto-fix          Disable automatic remediation when health checks detect known issues
   -h, --help             Show this help message
   -V, --version          Show version
 
@@ -764,6 +765,7 @@ rollback_snapshot() {
     local ctid="$1"
     if $SNAPSHOT_CREATED; then
         log "Rolling back container $ctid to snapshot '${SNAPSHOT_NAME}'..."
+        
         if pct rollback "$ctid" "$SNAPSHOT_NAME" >> "$LOG_FILE" 2>&1; then
             ok "Rollback successful. Container restored."
             # Optionally remove the snapshot after rollback
@@ -1037,6 +1039,7 @@ BATCH_FILE="" RANGE_SPEC="" PROFILE_NAME="" SAVE_PROFILE_NAME=""
 WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false
 EXPORT_DEST="" AS_TEMPLATE=false SYSPREP=false
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
+AUTO_FIX=true
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1051,6 +1054,7 @@ while [[ $# -gt 0 ]]; do
         -n|--dry-run)    DRY_RUN=true;      shift ;;
         -k|--keep-network) KEEP_NETWORK=true; shift ;;
         -S|--start)      AUTO_START=true;   shift ;;
+        --no-auto-fix)   AUTO_FIX=false;    shift ;;
         --shrink)        SHRINK_FIRST=true; shift ;;
         --snapshot)      CREATE_SNAPSHOT=true; shift ;;
         --rollback-on-failure) ROLLBACK_ON_FAILURE=true; shift ;;
@@ -1351,7 +1355,10 @@ run_preflight_validation() {
 
     # Check 7: Disk space estimation
     if [[ -d "$rootfs_path" ]]; then
-        local used_bytes=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' "$rootfs_path/" 2>/dev/null | awk '{print $1}')
+        local used_bytes=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
+            --exclude='tmp/*' --exclude='run/*' \
+            --exclude='mnt/*' --exclude='media/*' --exclude='lost+found' \
+            "${rootfs_path}/" 2>/dev/null | awk '{print $1}')
         local used_gb=$((used_bytes / 1024 / 1024 / 1024))
         check_pass "Container uses approximately ${used_gb}GB"
     fi
@@ -1639,7 +1646,9 @@ if $SHRINK_FIRST && ! $DRY_RUN; then
     SHRINK_ROOT="/var/lib/lxc/${CTID}/rootfs"
     if [[ -d "$SHRINK_ROOT" ]]; then
         SHRINK_USED_BYTES=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
-            --exclude='tmp/*' --exclude='run/*' "$SHRINK_ROOT/" 2>/dev/null | awk '{print $1}')
+            --exclude='tmp/*' --exclude='run/*' --exclude='mnt/*' \
+            --exclude='media/*' --exclude='lost+found' \
+            "${SHRINK_ROOT}/" 2>/dev/null | awk '{print $1}')
         SHRINK_USED_MB=$(( ${SHRINK_USED_BYTES:-0} / 1024 / 1024 ))
         SHRINK_USED_GB=$(( (SHRINK_USED_MB + 1023) / 1024 ))
     else
@@ -2206,6 +2215,18 @@ cat >> "$CHROOT_SCRIPT" <<'FSCK_MARKERS_BLOCK'
 rm -f /forcefsck /.autorelabel
 FSCK_MARKERS_BLOCK
 
+# Normalize man-db cache path to avoid post-conversion apt trigger failures
+# (seen as fopen/permission errors under /var/cache/man).
+cat >> "$CHROOT_SCRIPT" <<'MAN_CACHE_BLOCK'
+# --- Normalize man cache permissions ---
+mkdir -p /var/cache/man
+if command -v chattr >/dev/null 2>&1; then
+    chattr -R -i /var/cache/man 2>/dev/null || true
+fi
+chown root:root /var/cache/man 2>/dev/null || true
+chmod 0755 /var/cache/man 2>/dev/null || true
+MAN_CACHE_BLOCK
+
 # Ensure common API filesystem mountpoints exist on first VM boot.
 # These are often absent in container rootfs snapshots and can cause
 # systemd mount units (dev-mqueue, dev-hugepages, etc.) to fail noisily.
@@ -2394,10 +2415,20 @@ cp "$CHROOT_SCRIPT" "$MOUNT_POINT/tmp/chroot-setup.sh"
 chroot "$MOUNT_POINT" /bin/bash /tmp/chroot-setup.sh
 rm -f "$MOUNT_POINT/tmp/chroot-setup.sh"
 
+# Host-side boot artifact checks before import. This catches guests that would
+# otherwise appear converted but hang at BIOS/boot stage.
+if ! compgen -G "$MOUNT_POINT/boot/vmlinuz*" >/dev/null; then
+    die "No kernel image found in $MOUNT_POINT/boot after chroot install. Conversion aborted."
+fi
+if ! compgen -G "$MOUNT_POINT/boot/grub/grub.cfg" >/dev/null && ! compgen -G "$MOUNT_POINT/boot/grub2/grub.cfg" >/dev/null; then
+    die "No GRUB configuration found in converted image. Conversion aborted."
+fi
+
 log "Verifying converted root filesystem is writable before import..."
 touch "$MOUNT_POINT/.lxc-to-vm-rw-test" 2>>"$LOG_FILE" \
     || die "Converted root filesystem is not writable at $MOUNT_POINT. Check source filesystem health and retry."
 rm -f "$MOUNT_POINT/.lxc-to-vm-rw-test"
+
 # ==============================================================================
 # 6. VM CREATION
 # ==============================================================================
@@ -2529,17 +2560,135 @@ log "Running post-conversion validation..."
 
 CHECKS_PASSED=0
 CHECKS_TOTAL=0
+VM_HEALTH_ERRORS=0
+ROOT_RW_CHECK_FAILED=false
+REMOUNT_CHECK_FAILED=false
+
+collect_vm_diagnostics() {
+    log "Collecting host-side and guest-side diagnostics for VM $VMID..."
+    {
+        echo ""
+        echo "=== VM HEALTH DIAGNOSTICS (VMID=$VMID) ==="
+        echo "--- qm status ---"
+        qm status "$VMID" 2>&1 || true
+        echo "--- qm config ---"
+        qm config "$VMID" 2>&1 || true
+        echo "--- qm agent ping ---"
+        qm agent "$VMID" ping 2>&1 || true
+        echo "--- guest root mount options ---"
+        qm guest exec "$VMID" -- /bin/sh -lc 'findmnt -no SOURCE,FSTYPE,OPTIONS /' 2>&1 || true
+        echo "--- guest remount service ---"
+        qm guest exec "$VMID" -- /bin/sh -lc 'systemctl status systemd-remount-fs.service --no-pager -l || true' 2>&1 || true
+        echo "--- guest failed units ---"
+        qm guest exec "$VMID" -- /bin/sh -lc 'systemctl --failed --no-pager || true' 2>&1 || true
+        echo "--- guest kernel errors ---"
+        qm guest exec "$VMID" -- /bin/sh -lc 'journalctl -k -b -p err --no-pager -n 80 || true' 2>&1 || true
+        echo "=== END VM HEALTH DIAGNOSTICS ==="
+        echo ""
+    } >> "$LOG_FILE"
+    warn "Saved detailed VM diagnostics to $LOG_FILE"
+}
+
+auto_fix_boot_rw_issue() {
+    local vm_disk_volid disk_path map_output mapper_name mapper_root
+    local fix_mount="/tmp/lxc-to-vm-fix-${VMID}"
+    local fix_ok=false
+
+    log "Attempting automatic remediation for VM $VMID (root read-only/remount failure)..."
+
+    qm stop "$VMID" >/dev/null 2>&1 || true
+
+    vm_disk_volid=$(qm config "$VMID" 2>/dev/null | awk -F': ' '/^scsi0:/{print $2; exit}' | cut -d',' -f1)
+    [[ -n "$vm_disk_volid" ]] || {
+        warn "Auto-fix could not determine VM disk from scsi0."
+        return 1
+    }
+
+    disk_path=$(pvesm path "$vm_disk_volid" 2>/dev/null || true)
+    [[ -n "$disk_path" && -e "$disk_path" ]] || {
+        warn "Auto-fix could not resolve storage path for $vm_disk_volid."
+        return 1
+    }
+
+    map_output=$(kpartx -av "$disk_path" 2>&1) || {
+        warn "Auto-fix failed to map partitions for $disk_path"
+        echo "$map_output" >> "$LOG_FILE"
+        return 1
+    }
+    echo "$map_output" >> "$LOG_FILE"
+
+    mapper_name=$(echo "$map_output" | awk '/add map/{print $3; exit}')
+    [[ -n "$mapper_name" ]] || {
+        warn "Auto-fix could not identify mapped root partition for $disk_path"
+        kpartx -dv "$disk_path" >/dev/null 2>&1 || true
+        return 1
+    }
+    mapper_root="/dev/mapper/${mapper_name}"
+    [[ -b "$mapper_root" ]] || {
+        warn "Auto-fix mapped partition $mapper_root is not a block device"
+        kpartx -dv "$disk_path" >/dev/null 2>&1 || true
+        return 1
+    }
+
+    mkdir -p "$fix_mount"
+    if mount "$mapper_root" "$fix_mount"; then
+        mount --bind /dev "$fix_mount/dev" 2>/dev/null || true
+        mount --bind /proc "$fix_mount/proc" 2>/dev/null || true
+        mount --bind /sys "$fix_mount/sys" 2>/dev/null || true
+
+        chroot "$fix_mount" /bin/bash -lc '
+set -e
+if [ -f /etc/default/grub ]; then
+    if grep -q "^GRUB_CMDLINE_LINUX_DEFAULT=" /etc/default/grub; then
+        sed -i "s/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT=\"rw quiet\"/" /etc/default/grub
+    else
+        echo "GRUB_CMDLINE_LINUX_DEFAULT=\"rw quiet\"" >> /etc/default/grub
+    fi
+    update-grub || true
+fi
+mkdir -p /tmp /var/cache/man
+if command -v chattr >/dev/null 2>&1; then
+    chattr -R -i /var/cache/man 2>/dev/null || true
+fi
+chown root:root /tmp /var/cache/man 2>/dev/null || true
+chmod 1777 /tmp 2>/dev/null || true
+chmod 0755 /var/cache/man 2>/dev/null || true
+' >> "$LOG_FILE" 2>&1 && fix_ok=true
+    else
+        warn "Auto-fix failed to mount root partition $mapper_root"
+    fi
+
+    umount -lf "$fix_mount/sys" 2>/dev/null || true
+    umount -lf "$fix_mount/proc" 2>/dev/null || true
+    umount -lf "$fix_mount/dev" 2>/dev/null || true
+    umount -lf "$fix_mount" 2>/dev/null || true
+
+    e2fsck -fy "$mapper_root" >> "$LOG_FILE" 2>&1 || true
+    kpartx -dv "$disk_path" >/dev/null 2>&1 || true
+
+    if $fix_ok; then
+        qm start "$VMID" >> "$LOG_FILE" 2>&1 || {
+            warn "Auto-fix updated disk but failed to start VM $VMID"
+            return 1
+        }
+        return 0
+    fi
+
+    return 1
+}
 
 run_check() {
     local name="$1"
     local result="$2"  # 0 = pass, non-zero = fail
     local detail="${3:-}"
+
     CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
     if [[ "$result" -eq 0 ]]; then
         ok "CHECK: $name ${detail:+— $detail}"
         CHECKS_PASSED=$((CHECKS_PASSED + 1))
     else
         err "CHECK: $name ${detail:+— $detail}"
+        VM_HEALTH_ERRORS=$((VM_HEALTH_ERRORS + 1))
     fi
 }
 
@@ -2579,6 +2728,7 @@ if $AUTO_START; then
 
     log "Starting VM $VMID..."
     qm start "$VMID"
+    run_check "VM process entered running state" $([[ "$(qm status "$VMID" 2>/dev/null | awk '{print $2}')" == "running" ]] && echo 0 || echo 1) "$(qm status "$VMID" 2>/dev/null || echo 'unknown')"
 
     # Wait for QEMU guest agent (up to 120 seconds)
     log "Waiting for VM to boot and guest agent to respond (up to 120s)..."
@@ -2590,6 +2740,8 @@ if $AUTO_START; then
         fi
         sleep 5
     done
+
+    run_check "Guest agent responsive within timeout" $($AGENT_OK && echo 0 || echo 1) "120s"
 
     if $AGENT_OK; then
         ok "Guest agent is responding!"
@@ -2623,6 +2775,7 @@ if $AUTO_START; then
         ROOT_OPTS=$(echo "$ROOT_OPTS_JSON" | grep -oP '"out-data"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/\\n$//' || true)
         if [[ -n "$ROOT_OPTS" ]]; then
             run_check "Guest root mounted read-write" $([[ "$ROOT_OPTS" == *"rw"* ]] && echo 0 || echo 1) "$ROOT_OPTS"
+            [[ "$ROOT_OPTS" == *"rw"* ]] || ROOT_RW_CHECK_FAILED=true
         else
             warn "Could not read guest root mount options via guest agent."
         fi
@@ -2631,11 +2784,54 @@ if $AUTO_START; then
         REMOUNT_STATE=$(echo "$REMOUNT_JSON" | grep -oP '"out-data"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/\\n$//' || true)
         if [[ -n "$REMOUNT_STATE" ]]; then
             run_check "systemd-remount-fs.service active" $([[ "$REMOUNT_STATE" == "active" ]] && echo 0 || echo 1) "$REMOUNT_STATE"
+            [[ "$REMOUNT_STATE" == "active" ]] || REMOUNT_CHECK_FAILED=true
         fi
     else
         warn "Guest agent did not respond within 120s. VM may still be booting."
         warn "Check manually: qm terminal $VMID -iface serial0"
     fi
+
+    if (( VM_HEALTH_ERRORS > 0 )) && { $ROOT_RW_CHECK_FAILED || $REMOUNT_CHECK_FAILED; }; then
+        warn "Detected root remount/readonly issue. Triggering automatic remediation..."
+        if $AUTO_FIX && auto_fix_boot_rw_issue; then
+            # Re-check after remediation
+            AGENT_OK=false
+            for ((i=1; i<=18; i++)); do
+                if qm agent "$VMID" ping >/dev/null 2>&1; then
+                    AGENT_OK=true
+                    break
+                fi
+                sleep 5
+            done
+
+            if $AGENT_OK; then
+                ROOT_OPTS_JSON=$(qm guest exec "$VMID" -- /bin/sh -lc 'findmnt -no OPTIONS /' 2>/dev/null || true)
+                ROOT_OPTS=$(echo "$ROOT_OPTS_JSON" | grep -oP '"out-data"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/\\n$//' || true)
+                REMOUNT_JSON=$(qm guest exec "$VMID" -- /bin/sh -lc 'systemctl is-active systemd-remount-fs.service || true' 2>/dev/null || true)
+                REMOUNT_STATE=$(echo "$REMOUNT_JSON" | grep -oP '"out-data"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/\\n$//' || true)
+
+                if [[ "$ROOT_OPTS" == *"rw"* && "$REMOUNT_STATE" == "active" ]]; then
+                    ok "Automatic remediation succeeded: root is rw and remount service is active."
+                    VM_HEALTH_ERRORS=0
+                    ROOT_RW_CHECK_FAILED=false
+                    REMOUNT_CHECK_FAILED=false
+                else
+                    warn "Automatic remediation ran but VM health is still degraded (root_opts='${ROOT_OPTS:-unknown}', remount='${REMOUNT_STATE:-unknown}')."
+                fi
+            else
+                warn "Automatic remediation completed but guest agent did not recover in time."
+            fi
+        else
+            warn "Automatic remediation is disabled (--no-auto-fix)."
+        fi
+    elif (( VM_HEALTH_ERRORS > 0 )); then
+        warn "Automatic remediation is disabled (--no-auto-fix)."
+    fi
+fi
+
+if (( VM_HEALTH_ERRORS > 0 )); then
+    collect_vm_diagnostics
+    die "Post-conversion VM health checks failed (${VM_HEALTH_ERRORS} issue(s)). Review $LOG_FILE for host/guest diagnostics."
 fi
 
 # ==============================================================================
