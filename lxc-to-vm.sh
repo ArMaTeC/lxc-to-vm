@@ -2,7 +2,7 @@
 # shellcheck shell=bash
 # ==============================================================================
 # Proxmox LXC to VM Converter
-# Version: 6.0.1
+# Version: 6.0.2
 # ==============================================================================
 #
 # DESCRIPTION:
@@ -43,7 +43,7 @@
 # -o pipefail: Return value of pipeline is value of last command to fail
 set -Eeuo pipefail
 
-readonly VERSION="6.0.1"
+readonly VERSION="6.0.2"
 readonly LOG_FILE="/var/log/lxc-to-vm.log"
 
 # ==============================================================================

@@ -1081,6 +1081,14 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 ## Changelog
 
+### v6.0.2 (2025-02-15)
+**"Bug Fix Edition" — Critical boot and cleanup fixes**
+
+- **Fixed FEATURE_C12 Boot Error** — Properly disable `metadata_csum` and related ext4 features to prevent initramfs boot failures
+- **Fixed Cleanup Trap** — Properly unmount virtual filesystems (`dev/pts`, `dev`, `proc`, `sys`) before temp directory removal
+- **Added Metadata Checksum Verification** — Verify `metadata_csum` is actually disabled before proceeding with conversion
+- **Improved tune2fs Error Handling** — Fail conversion if ext4 feature disabling fails (no silent failures)
+
 ### v6.0.1 (2025-02-13)
 **"Cluster & Intelligence Edition" — 3 major features**
 
