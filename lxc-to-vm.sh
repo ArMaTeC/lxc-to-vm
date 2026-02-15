@@ -2153,7 +2153,7 @@ CHROOT_HEADER
 # Append fstab
 cat >> "$CHROOT_SCRIPT" <<FSTAB_BLOCK
 # --- FSTAB ---
-echo "UUID=${NEW_UUID} / ext4 errors=remount-ro 0 1" > /etc/fstab
+echo "UUID=${NEW_UUID} / ext4 defaults,errors=remount-ro 0 1" > /etc/fstab
 FSTAB_BLOCK
 
 if [[ -n "$EFI_UUID" ]]; then
@@ -2169,6 +2169,16 @@ if [ ! -s /etc/hostname ]; then
     echo "converted-vm" > /etc/hostname
 fi
 HOSTNAME_BLOCK
+
+# Ensure common API filesystem mountpoints exist on first VM boot.
+# These are often absent in container rootfs snapshots and can cause
+# systemd mount units (dev-mqueue, dev-hugepages, etc.) to fail noisily.
+cat >> "$CHROOT_SCRIPT" <<'API_MOUNTPOINTS_BLOCK'
+# --- API filesystem mountpoints ---
+mkdir -p /dev/pts /dev/shm /dev/hugepages /dev/mqueue
+mkdir -p /proc/sys/fs/binfmt_misc
+mkdir -p /sys/fs/fuse/connections /sys/kernel/config /sys/kernel/debug /sys/kernel/tracing
+API_MOUNTPOINTS_BLOCK
 
 # --- Networking block (depends on --keep-network) ---
 if $KEEP_NETWORK; then
@@ -2232,8 +2242,8 @@ case "$DISTRO_FAMILY" in
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_EFI
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64
+apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --recheck --no-nvram --force --removable
 update-grub
 DEBIAN_EFI
@@ -2241,8 +2251,8 @@ DEBIAN_EFI
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_BIOS
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-pc 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc
+apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus
 grub-install --target=i386-pc --recheck --force "${LOOP_DEV}"
 update-grub
 DEBIAN_BIOS
