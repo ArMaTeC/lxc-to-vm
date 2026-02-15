@@ -2086,7 +2086,7 @@ log "Source size: ${SRC_SIZE_HR} — starting copy..."
 # Detect unprivileged LXC ID mapping so ownership can be normalized in VM.
 # Without this, files copied from an unprivileged CT can retain shifted host
 # IDs (e.g. 100000:100000), which breaks systemd and core boot services.
-declare -a RSYNC_IDMAP_ARGS=()
+NEED_UID_GID_NORMALIZATION=false
 CT_CONFIG_RAW="$(pct config "$CTID" 2>/dev/null || true)"
 if echo "$CT_CONFIG_RAW" | grep -qE '^unprivileged:\s*1'; then
     UID_SHIFT_BASE="$(echo "$CT_CONFIG_RAW" | awk '$1=="lxc.idmap:" && $2=="u" && $3=="0" {print $4; exit}')"
@@ -2099,18 +2099,11 @@ if echo "$CT_CONFIG_RAW" | grep -qE '^unprivileged:\s*1'; then
     [[ "$GID_SHIFT_BASE" =~ ^[0-9]+$ ]] || GID_SHIFT_BASE="$UID_SHIFT_BASE"
     [[ "$GID_SHIFT_COUNT" =~ ^[0-9]+$ ]] || GID_SHIFT_COUNT="$UID_SHIFT_COUNT"
 
-    UID_SHIFT_END=$((UID_SHIFT_BASE + UID_SHIFT_COUNT - 1))
-    GID_SHIFT_END=$((GID_SHIFT_BASE + GID_SHIFT_COUNT - 1))
-
-    RSYNC_IDMAP_ARGS=(
-        "--usermap=${UID_SHIFT_BASE}-${UID_SHIFT_END}:0-$((UID_SHIFT_COUNT - 1))"
-        "--groupmap=${GID_SHIFT_BASE}-${GID_SHIFT_END}:0-$((GID_SHIFT_COUNT - 1))"
-    )
-    log "Detected unprivileged CT with ID mapping u:0->${UID_SHIFT_BASE} (${UID_SHIFT_COUNT}), g:0->${GID_SHIFT_BASE} (${GID_SHIFT_COUNT}); normalizing ownership during copy."
+    NEED_UID_GID_NORMALIZATION=true
+    log "Detected unprivileged CT with ID mapping u:0->${UID_SHIFT_BASE} (${UID_SHIFT_COUNT}), g:0->${GID_SHIFT_BASE} (${GID_SHIFT_COUNT}); will normalize ownership after copy."
 fi
 
 rsync -axHAX --info=progress2 --no-inc-recursive \
-    "${RSYNC_IDMAP_ARGS[@]}" \
     --partial --partial-dir="${TEMP_DIR}/.rsync-partial" \
     --exclude='/dev/*' \
     --exclude='/proc/*' \
@@ -2125,6 +2118,58 @@ rsync -axHAX --info=progress2 --no-inc-recursive \
     save_resume_state "$CTID" "$VMID" "rsync-failed" "partial_dir=${TEMP_DIR}/.rsync-partial"
     die "Rsync failed. Resume with: $0 -c $CTID -v $VMID --resume"
 }
+
+if $NEED_UID_GID_NORMALIZATION; then
+    command -v python3 >/dev/null 2>&1 || die "python3 is required to normalize unprivileged CT ownership mappings."
+    log "Normalizing shifted UID/GID ownership in copied filesystem..."
+    python3 - "$MOUNT_POINT" "$UID_SHIFT_BASE" "$UID_SHIFT_COUNT" "$GID_SHIFT_BASE" "$GID_SHIFT_COUNT" >> "$LOG_FILE" 2>&1 <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+uid_base = int(sys.argv[2])
+uid_count = int(sys.argv[3])
+gid_base = int(sys.argv[4])
+gid_count = int(sys.argv[5])
+
+uid_end = uid_base + uid_count
+gid_end = gid_base + gid_count
+
+changed = 0
+errors = 0
+
+def remap(value, base, end):
+    if base <= value < end:
+        return value - base
+    return value
+
+def process_path(path):
+    global changed, errors
+    try:
+        st = os.lstat(path)
+        new_uid = remap(st.st_uid, uid_base, uid_end)
+        new_gid = remap(st.st_gid, gid_base, gid_end)
+        if new_uid != st.st_uid or new_gid != st.st_gid:
+            os.lchown(path, new_uid, new_gid)
+            changed += 1
+    except Exception as exc:
+        errors += 1
+        if errors <= 20:
+            print(f"ownership remap warning: {path}: {exc}")
+
+process_path(root)
+for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    for name in dirnames:
+        process_path(os.path.join(dirpath, name))
+    for name in filenames:
+        process_path(os.path.join(dirpath, name))
+
+print(f"ownership remap changed={changed} errors={errors}")
+if errors > 0:
+    sys.exit(1)
+PY
+    ok "Ownership normalization complete."
+fi
 
 log "Unmounting LXC container..."
 pct unmount "$CTID"
@@ -2318,7 +2363,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent 2>/dev/null \
     || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent
-grub-install --target=i386-pc --recheck --force "${LOOP_DEV}"
+if ! grub-install --target=i386-pc --recheck --force --skip-fs-probe "${LOOP_DEV}"; then
+    grub-install --target=i386-pc --boot-directory=/boot --force --skip-fs-probe "${LOOP_DEV}"
+fi
 # Force rw root remount on boot. Some converted guests can otherwise remain on
 # kernel cmdline default 'ro' if remount service runs in a constrained context.
 if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub 2>/dev/null; then
