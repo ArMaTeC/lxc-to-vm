@@ -38,9 +38,10 @@
 
 # Bash strict mode: exit on error, undefined variable, or pipe failure
 # -e: Exit immediately if a command exits with non-zero status
+# -E: Propagate ERR trap into functions/subshells
 # -u: Treat unset variables as an error
 # -o pipefail: Return value of pipeline is value of last command to fail
-set -euo pipefail
+set -Eeuo pipefail
 
 readonly VERSION="6.0.1"
 readonly LOG_FILE="/var/log/lxc-to-vm.log"
@@ -118,6 +119,98 @@ ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 # Arguments: $* - Error message
 # Exits: With E_INVALID_ARG (1)
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
+
+# Map failed command to likely root cause + actionable fix
+error_reason_and_fix() {
+    local failed_cmd="$1"
+    local reason="Command failed during conversion workflow."
+    local fix="Check the full log and rerun with --dry-run to verify inputs and environment."
+
+    case "$failed_cmd" in
+        *"pct mount"*)
+            reason="Container mount failed (container state, storage backend issue, or lock)."
+            fix="Run: pct status <CTID>; pct unlock <CTID>; verify storage health, then retry."
+            ;;
+        *"rsync"*)
+            reason="File copy failed due to permissions, I/O errors, or insufficient temp space."
+            fix="Check free space in temp dir, source filesystem health, and retry (or use --resume)."
+            ;;
+        *"losetup"*|*"kpartx"*|*"parted"*|*"mkfs."*)
+            reason="Disk image preparation failed (loop/mapper mapping or partition/filesystem creation)."
+            fix="Check loop devices (losetup -a), /dev/mapper entries, and required disk tooling."
+            ;;
+        *"chroot"*"/tmp/chroot-setup.sh"*)
+            reason="Kernel/bootloader injection failed inside chroot."
+            fix="Review package-manager errors in log; verify DNS/repositories and distro package names."
+            ;;
+        *"apt-get"*|*"yum"*|*"dnf"*|*"apk"*|*"pacman"*)
+            reason="Package installation failed in chroot (repo/network/package availability)."
+            fix="Test internet + DNS from host/chroot, refresh repositories, and verify package names."
+            ;;
+        *"qm importdisk"*)
+            reason="Disk import failed (storage target issue or inaccessible temp image)."
+            fix="Run pvesm status; verify target storage has free space and image file exists."
+            ;;
+        *"qm create"*|*"qm set"*|*"qm resize"*)
+            reason="VM creation/configuration failed (VMID conflict, bad storage/bridge, or permissions)."
+            fix="Check qm config <VMID>, validate bridge/storage names, and ensure VMID is unused."
+            ;;
+    esac
+
+    printf '%s|%s\n' "$reason" "$fix"
+}
+
+# Map failed command to a stable script exit code for automation
+error_exit_code() {
+    local failed_cmd="$1"
+
+    case "$failed_cmd" in
+        *"pct config"*|*"qm config"*|*"pvesm path"*)
+            echo "$E_NOT_FOUND"
+            ;;
+        *"df "*|*"rsync"*|*"qm importdisk"*)
+            echo "$E_DISK_FULL"
+            ;;
+        *"pct migrate"*)
+            echo "$E_MIGRATION"
+            ;;
+        *"pct "*|*"qm "*|*"mount "*|*"umount "*|*"losetup"*|*"kpartx"*|*"parted"*|*"mkfs."*|*"grub"*|*"chroot"*)
+            echo "$E_CONVERSION"
+            ;;
+        *)
+            echo "$E_INVALID_ARG"
+            ;;
+    esac
+}
+
+# Global ERR trap for actionable diagnostics
+on_error() {
+    local exit_code=$?
+
+    local line_no="${BASH_LINENO[0]:-unknown}"
+    local src_file="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
+    local failed_cmd="${BASH_COMMAND:-unknown}"
+    local reason_fix reason fix mapped_code
+
+    trap - ERR
+
+    reason_fix=$(error_reason_and_fix "$failed_cmd")
+    reason="${reason_fix%%|*}"
+    fix="${reason_fix#*|}"
+    mapped_code=$(error_exit_code "$failed_cmd")
+
+    err "Unhandled error (raw exit ${exit_code}, mapped exit ${mapped_code}) at ${src_file}:${line_no}"
+
+    err "Failed command: ${failed_cmd}"
+    warn "Likely reason: ${reason}"
+    warn "Suggested fix: ${fix}"
+    warn "Log tail (${LOG_FILE}):"
+    tail -n 40 "$LOG_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
+
+    exit "$mapped_code"
+}
+
+trap 'on_error' ERR
 
 # --- Usage / Help ---
 usage() {
@@ -2028,10 +2121,16 @@ cp -L /etc/resolv.conf "$MOUNT_POINT/etc/resolv.conf" 2>/dev/null || true
 # --- Detect distro inside the container ---
 DISTRO_FAMILY="unknown"
 if [[ -f "$MOUNT_POINT/etc/os-release" ]]; then
-    # Use subshell to isolate environment and avoid conflicts with readonly variables
+    # Parse os-release defensively. Some containers ship malformed files that can
+    # break `source` under `set -e`, which would abort conversion before VM creation.
+    # On parse failure, fall back to "unknown" and continue.
     DISTRO_ID=$(
         unset VERSION 2>/dev/null || true
-        . "$MOUNT_POINT/etc/os-release" 2>/dev/null && echo "${ID:-unknown}"
+        if . "$MOUNT_POINT/etc/os-release" 2>/dev/null; then
+            echo "${ID:-unknown}"
+        else
+            echo "unknown"
+        fi
     )
     case "$DISTRO_ID" in
         debian|ubuntu|linuxmint|pop|kali|proxmox) DISTRO_FAMILY="debian" ;;
