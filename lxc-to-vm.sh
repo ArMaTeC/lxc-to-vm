@@ -1970,6 +1970,8 @@ pick_work_dir() {
     echo "$selected_path"
 }
 
+do_conversion() {
+
 # Determine the working base directory
 WORK_BASE="${WORK_DIR:-$DEFAULT_WORK_BASE}"
 mkdir -p "$WORK_BASE" 2>/dev/null || true
@@ -2378,6 +2380,11 @@ cp "$CHROOT_SCRIPT" "$MOUNT_POINT/tmp/chroot-setup.sh"
 chroot "$MOUNT_POINT" /bin/bash /tmp/chroot-setup.sh
 rm -f "$MOUNT_POINT/tmp/chroot-setup.sh"
 
+log "Verifying converted root filesystem is writable before import..."
+touch "$MOUNT_POINT/.lxc-to-vm-rw-test" 2>>"$LOG_FILE" \
+    || die "Converted root filesystem is not writable at $MOUNT_POINT. Check source filesystem health and retry."
+rm -f "$MOUNT_POINT/.lxc-to-vm-rw-test"
+
 # ==============================================================================
 # 6. VM CREATION
 # ==============================================================================
@@ -2407,7 +2414,14 @@ umount -lf "$MOUNT_POINT" 2>/dev/null || true
 # Run a final offline filesystem check before import so first VM boot does not
 # start in a degraded read-only state due to journal/superblock inconsistencies.
 log "Running final filesystem check on root partition..."
-e2fsck -fy "$LOOP_MAP" >> "$LOG_FILE" 2>&1 || true
+FSCK_RC=0
+e2fsck -fy "$LOOP_MAP" >> "$LOG_FILE" 2>&1 || FSCK_RC=$?
+if (( FSCK_RC >= 4 )); then
+    die "Filesystem check failed on $LOOP_MAP (e2fsck exit $FSCK_RC). See $LOG_FILE for details."
+fi
+if (( FSCK_RC > 0 )); then
+    warn "e2fsck corrected filesystem issues on $LOOP_MAP (exit $FSCK_RC)."
+fi
 
 # Allow kernel time to release the device after unmount
 sync
