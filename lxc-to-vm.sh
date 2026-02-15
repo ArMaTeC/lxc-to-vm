@@ -2197,6 +2197,13 @@ if [ ! -s /etc/hostname ]; then
 fi
 HOSTNAME_BLOCK
 
+# Remove stale one-shot flags that can force repeated recovery/failsafe behavior
+# after container-to-VM migration.
+cat >> "$CHROOT_SCRIPT" <<'FSCK_MARKERS_BLOCK'
+# --- Clear stale fsck/relabel markers ---
+rm -f /forcefsck /.autorelabel
+FSCK_MARKERS_BLOCK
+
 # Ensure common API filesystem mountpoints exist on first VM boot.
 # These are often absent in container rootfs snapshots and can cause
 # systemd mount units (dev-mqueue, dev-hugepages, etc.) to fail noisily.
@@ -2396,6 +2403,11 @@ for mp in dev/pts dev proc sys; do
     umount -lf "$MOUNT_POINT/$mp" 2>/dev/null || true
 done
 umount -lf "$MOUNT_POINT" 2>/dev/null || true
+
+# Run a final offline filesystem check before import so first VM boot does not
+# start in a degraded read-only state due to journal/superblock inconsistencies.
+log "Running final filesystem check on root partition..."
+e2fsck -fy "$LOOP_MAP" >> "$LOG_FILE" 2>&1 || true
 
 # Allow kernel time to release the device after unmount
 sync
