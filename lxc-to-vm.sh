@@ -1607,15 +1607,22 @@ fi
 REQUIRED_MB=$(( (DISK_SIZE + 1) * 1024 ))
 DEFAULT_WORK_BASE="/var/lib/vz/dump"
 
-# ==============================================================================
-# MAIN CONVERSION FUNCTION
-# ==============================================================================
-
-do_conversion() {
-    # No arguments needed — uses global vars set by argument parsing or wizard
+# -----------------------------------------------------------------------------
+# Disk Space Check Function
+# Arguments:
+#   $1 - Directory to check
+# Returns: Available space in MB via echo
+# -----------------------------------------------------------------------------
+check_space() {
+    local dir="$1"
+    local avail_mb
     avail_mb=$(df -BM --output=avail "$dir" 2>/dev/null | tail -1 | tr -d ' M')
     echo "${avail_mb:-0}"
 }
+
+# ==============================================================================
+# MAIN CONVERSION FUNCTION
+# ==============================================================================
 
 pick_work_dir() {
     local base="$1"
