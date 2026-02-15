@@ -147,8 +147,10 @@ Distro is auto-detected from `/etc/os-release` inside the container. The script 
 ### Fastest method — shrink and convert in one command
 
 ```bash
+rm lxc-to-vm.sh shrink-lxc.sh
 wget https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
-chmod +x lxc-to-vm.sh
+wget https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh
+chmod +x lxc-to-vm.sh shrink-lxc.sh
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 ```
 
@@ -986,6 +988,47 @@ After the script completes (especially if you didn't use `--start`):
 - The cleanup trap automatically removes temp files and loop devices.
 - Check the log for details: `cat /var/log/lxc-to-vm.log`
 - If loop devices are stuck: `losetup -D` (detaches all).
+
+### Exit codes for automation
+
+Both scripts now emit **mapped exit codes** (not only raw shell command exits) so CI/automation can react consistently.
+
+#### `lxc-to-vm.sh`
+
+| Exit code | Constant         | Meaning |
+|---|---|---|
+| `1` | `E_INVALID_ARG` | Invalid arguments or uncategorized failure |
+| `2` | `E_NOT_FOUND` | Missing container/VM/storage reference |
+| `3` | `E_DISK_FULL` | Disk/temp-space related failure |
+| `4` | `E_PERMISSION` | Permission-related failure |
+| `5` | `E_MIGRATION` | Cluster migration failed |
+| `6` | `E_CONVERSION` | Core conversion workflow failed |
+
+#### `shrink-lxc.sh`
+
+| Exit code | Constant           | Meaning |
+|---|---|---|
+| `1` | `E_INVALID_ARG`   | Invalid arguments or uncategorized failure |
+| `2` | `E_NOT_FOUND`     | Missing container/path/resource |
+| `3` | `E_DISK_FULL`     | Disk space/usage detection failure |
+| `4` | `E_PERMISSION`    | Permission-related failure |
+| `5` | `E_SHRINK_FAILED` | Filesystem/storage shrink workflow failed |
+
+Example (bash automation):
+
+```bash
+./lxc-to-vm.sh -c 126 -v 260 -s local-lvm -d 6
+rc=$?
+
+case "$rc" in
+  2) echo "Missing resource (CT/VM/storage)." ;;
+  3) echo "Disk space issue." ;;
+  5) echo "Migration failure." ;;
+  6) echo "Conversion failure (check /var/log/lxc-to-vm.log)." ;;
+  0) echo "Success." ;;
+  *) echo "General failure (code $rc)." ;;
+esac
+```
 
 ### Disk space issues
 

@@ -35,8 +35,9 @@
 # ==============================================================================
 
 # Bash strict mode: exit on error, undefined variable, or pipe failure
+# -E propagates ERR trap into functions/subshells
 # This catches bugs early and prevents partial/inconsistent state
-set -euo pipefail
+set -Eeuo pipefail
 
 readonly VERSION="6.0.1"
 readonly LOG_FILE="/var/log/shrink-lxc.log"
@@ -119,6 +120,89 @@ ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 # Arguments: $* - Error message to display
 # Exits: Always exits with code 1
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
+
+# Map failed command to likely root cause + actionable fix
+error_reason_and_fix() {
+    local failed_cmd="$1"
+    local reason="Command failed during shrink workflow."
+    local fix="Check the log and rerun with --dry-run to validate parameters and environment."
+
+    case "$failed_cmd" in
+        *"pct mount"*|*"pct unmount"*)
+            reason="Container mount/unmount operation failed."
+            fix="Check container state/lock: pct status <CTID>; pct unlock <CTID>; retry."
+            ;;
+        *"e2fsck"*)
+            reason="Filesystem check found unrecoverable issues or could not access device."
+            fix="Run e2fsck manually on the target device and ensure container is stopped."
+            ;;
+        *"resize2fs"*)
+            reason="Filesystem shrink target is too small or filesystem is inconsistent."
+            fix="Increase target size/headroom and run e2fsck first; review minimum size output."
+            ;;
+        *"lvresize"*|*"zfs"*|*"qemu-img"*|*"truncate"*)
+            reason="Storage-level resize failed (backend constraints, permissions, or in-use volume)."
+            fix="Verify backend health and free space; ensure target volume/image is not busy."
+            ;;
+        *"losetup"*|*"kpartx"*)
+            reason="Loop/partition mapping operation failed."
+            fix="Check loop devices (losetup -a), mapper nodes, and retry after cleanup."
+            ;;
+        *"pct set"*)
+            reason="Container configuration update failed after resize."
+            fix="Validate rootfs syntax and set size manually: pct set <CTID> --rootfs <vol>,size=<N>G."
+            ;;
+    esac
+
+    printf '%s|%s\n' "$reason" "$fix"
+}
+
+# Map failed command to a stable script exit code for automation
+error_exit_code() {
+    local failed_cmd="$1"
+
+    case "$failed_cmd" in
+        *"pct config"*|*"pvesm path"*|*"du -sb"*)
+            echo "$E_NOT_FOUND"
+            ;;
+        *"df "*|*"pct df"*)
+            echo "$E_DISK_FULL"
+            ;;
+        *"pct "*|*"mount "*|*"umount "*|*"losetup"*|*"kpartx"*|*"qemu-img"*|*"lvresize"*|*"zfs"*|*"resize2fs"*|*"e2fsck"*|*"truncate"*)
+            echo "$E_SHRINK_FAILED"
+            ;;
+        *)
+            echo "$E_INVALID_ARG"
+            ;;
+    esac
+}
+
+# Global ERR trap for actionable diagnostics
+on_error() {
+    local exit_code=$?
+    local line_no="${BASH_LINENO[0]:-unknown}"
+    local src_file="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
+    local failed_cmd="${BASH_COMMAND:-unknown}"
+    local reason_fix reason fix mapped_code
+
+    trap - ERR
+
+    reason_fix=$(error_reason_and_fix "$failed_cmd")
+    reason="${reason_fix%%|*}"
+    fix="${reason_fix#*|}"
+    mapped_code=$(error_exit_code "$failed_cmd")
+
+    err "Unhandled error (raw exit ${exit_code}, mapped exit ${mapped_code}) at ${src_file}:${line_no}"
+    err "Failed command: ${failed_cmd}"
+    warn "Likely reason: ${reason}"
+    warn "Suggested fix: ${fix}"
+    warn "Log tail (${LOG_FILE}):"
+    tail -n 40 "$LOG_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
+
+    exit "$mapped_code"
+}
+
+trap 'on_error' ERR
 
 # --- Usage / Help ---
 # Shows comprehensive help when -h or --help is requested
