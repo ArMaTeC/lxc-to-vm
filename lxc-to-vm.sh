@@ -2281,6 +2281,13 @@ apt-get update -qq
 apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent 2>/dev/null \
     || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --recheck --no-nvram --force --removable
+# Force rw root remount on boot. Some converted guests can otherwise remain on
+# kernel cmdline default 'ro' if remount service runs in a constrained context.
+if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub 2>/dev/null; then
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="rw quiet"/' /etc/default/grub
+else
+    echo 'GRUB_CMDLINE_LINUX_DEFAULT="rw quiet"' >> /etc/default/grub
+fi
 update-grub
 systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service qemu-guest-agent.service 2>/dev/null || true
 DEBIAN_EFI
@@ -2291,6 +2298,13 @@ apt-get update -qq
 apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent 2>/dev/null \
     || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent
 grub-install --target=i386-pc --recheck --force "${LOOP_DEV}"
+# Force rw root remount on boot. Some converted guests can otherwise remain on
+# kernel cmdline default 'ro' if remount service runs in a constrained context.
+if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub 2>/dev/null; then
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="rw quiet"/' /etc/default/grub
+else
+    echo 'GRUB_CMDLINE_LINUX_DEFAULT="rw quiet"' >> /etc/default/grub
+fi
 update-grub
 systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service qemu-guest-agent.service 2>/dev/null || true
 DEBIAN_BIOS
@@ -2384,7 +2398,6 @@ log "Verifying converted root filesystem is writable before import..."
 touch "$MOUNT_POINT/.lxc-to-vm-rw-test" 2>>"$LOG_FILE" \
     || die "Converted root filesystem is not writable at $MOUNT_POINT. Check source filesystem health and retry."
 rm -f "$MOUNT_POINT/.lxc-to-vm-rw-test"
-
 # ==============================================================================
 # 6. VM CREATION
 # ==============================================================================
@@ -2394,6 +2407,12 @@ MEMORY=$(pct config "$CTID" | awk '/^memory:/{print $2}')
 [[ -z "$MEMORY" || "$MEMORY" -lt 512 ]] && MEMORY=2048
 CORES=$(pct config "$CTID" | awk '/^cores:/{print $2}')
 [[ -z "$CORES" || "$CORES" -lt 1 ]] && CORES=2
+CT_HOSTNAME=$(echo "${CT_CONFIG_RAW:-}" | awk '/^hostname:/{print $2; exit}')
+if [[ -z "$CT_HOSTNAME" ]]; then
+    CT_HOSTNAME=$(pct config "$CTID" 2>/dev/null | awk '/^hostname:/{print $2; exit}')
+fi
+[[ -n "$CT_HOSTNAME" ]] || CT_HOSTNAME="ct${CTID}"
+VM_NAME="${CT_HOSTNAME}-converted"
 OSTYPE="l26"  # Linux 2.6+ kernel (generic)
 
 log "Unmounting image before import..."
@@ -2443,10 +2462,11 @@ done
 LOOP_DEV=""  # Clear so cleanup trap doesn't double-free
 
 log "Creating VM $VMID..."
+log "VM name: $VM_NAME"
 
 # Create VM shell
 qm create "$VMID" \
-    --name "converted-ct${CTID}" \
+    --name "$VM_NAME" \
     --memory "$MEMORY" \
     --cores "$CORES" \
     --net0 "virtio,bridge=${BRIDGE}" \
@@ -2597,6 +2617,21 @@ if $AUTO_START; then
         GUEST_OS=$(qm agent "$VMID" get-osinfo 2>/dev/null \
             | grep -oP '"pretty-name"\s*:\s*"\K[^"]+' 2>/dev/null || echo "unknown")
         [[ "$GUEST_OS" != "unknown" ]] && ok "Guest OS: $GUEST_OS"
+
+        # Root mount and remount service health checks.
+        ROOT_OPTS_JSON=$(qm guest exec "$VMID" -- /bin/sh -lc 'findmnt -no OPTIONS /' 2>/dev/null || true)
+        ROOT_OPTS=$(echo "$ROOT_OPTS_JSON" | grep -oP '"out-data"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/\\n$//' || true)
+        if [[ -n "$ROOT_OPTS" ]]; then
+            run_check "Guest root mounted read-write" $([[ "$ROOT_OPTS" == *"rw"* ]] && echo 0 || echo 1) "$ROOT_OPTS"
+        else
+            warn "Could not read guest root mount options via guest agent."
+        fi
+
+        REMOUNT_JSON=$(qm guest exec "$VMID" -- /bin/sh -lc 'systemctl is-active systemd-remount-fs.service || true' 2>/dev/null || true)
+        REMOUNT_STATE=$(echo "$REMOUNT_JSON" | grep -oP '"out-data"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/\\n$//' || true)
+        if [[ -n "$REMOUNT_STATE" ]]; then
+            run_check "systemd-remount-fs.service active" $([[ "$REMOUNT_STATE" == "active" ]] && echo 0 || echo 1) "$REMOUNT_STATE"
+        fi
     else
         warn "Guest agent did not respond within 120s. VM may still be booting."
         warn "Check manually: qm terminal $VMID -iface serial0"
