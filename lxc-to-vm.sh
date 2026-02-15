@@ -2363,8 +2363,15 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent 2>/dev/null \
     || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent
-if ! grub-install --target=i386-pc --recheck --force --skip-fs-probe "${LOOP_DEV}"; then
-    grub-install --target=i386-pc --boot-directory=/boot --force --skip-fs-probe "${LOOP_DEV}"
+rm -f /tmp/lxc-to-vm-grub-bios-fallback.flag
+GRUB_INSTALL_OK=0
+if grub-install --target=i386-pc --recheck --force --skip-fs-probe "${LOOP_DEV}"; then
+    GRUB_INSTALL_OK=1
+elif grub-install --target=i386-pc --boot-directory=/boot --force --skip-fs-probe "${LOOP_DEV}"; then
+    GRUB_INSTALL_OK=1
+fi
+if [ "$GRUB_INSTALL_OK" -ne 1 ]; then
+    echo "chroot-bios-grub-install-failed" > /tmp/lxc-to-vm-grub-bios-fallback.flag
 fi
 # Force rw root remount on boot. Some converted guests can otherwise remain on
 # kernel cmdline default 'ro' if remount service runs in a constrained context.
@@ -2460,6 +2467,20 @@ log "Entering chroot to install kernel and GRUB ($DISTRO_FAMILY / $BIOS_TYPE)...
 chmod +x "$CHROOT_SCRIPT"
 cp "$CHROOT_SCRIPT" "$MOUNT_POINT/tmp/chroot-setup.sh"
 chroot "$MOUNT_POINT" /bin/bash /tmp/chroot-setup.sh
+
+# Some Ubuntu/Debian BIOS images on loop-backed ext4 can fail grub-install inside
+# chroot with "unknown filesystem" despite successful package install. If marked,
+# run a host-side grub-install fallback against the same loop device + boot dir.
+if [[ "$DISTRO_FAMILY" == "debian" && "$BIOS_TYPE" == "seabios" && -f "$MOUNT_POINT/tmp/lxc-to-vm-grub-bios-fallback.flag" ]]; then
+    warn "Chroot BIOS grub-install failed; attempting host-side grub-install fallback..."
+    command -v grub-install >/dev/null 2>&1 || die "Host grub-install is required for BIOS fallback but is not available."
+    grub-install --target=i386-pc --boot-directory="$MOUNT_POINT/boot" --recheck --force --skip-fs-probe "$LOOP_DEV" >> "$LOG_FILE" 2>&1 \
+        || die "Host-side BIOS grub-install fallback failed. Review $LOG_FILE for details."
+    chroot "$MOUNT_POINT" /bin/bash -lc 'update-grub || grub-mkconfig -o /boot/grub/grub.cfg' >> "$LOG_FILE" 2>&1 \
+        || die "Host-side BIOS fallback succeeded but failed to generate grub.cfg. Review $LOG_FILE for details."
+    ok "Host-side BIOS grub-install fallback succeeded."
+fi
+rm -f "$MOUNT_POINT/tmp/lxc-to-vm-grub-bios-fallback.flag"
 rm -f "$MOUNT_POINT/tmp/chroot-setup.sh"
 
 # Host-side boot artifact checks before import. This catches guests that would
