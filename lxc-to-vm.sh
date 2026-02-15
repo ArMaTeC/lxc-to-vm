@@ -2030,7 +2030,8 @@ if [[ "$BIOS_TYPE" == "ovmf" ]]; then
     mkfs.fat -F32 "$EFI_PART" >> "$LOG_FILE" 2>&1
 
     log "Formatting root partition ($LOOP_MAP)..."
-    mkfs.ext4 -F "$LOOP_MAP" >> "$LOG_FILE" 2>&1
+    # Disable metadata_csum (FEATURE_C12) at creation time to ensure initramfs compatibility
+    mkfs.ext4 -F -O ^metadata_csum "$LOOP_MAP" >> "$LOG_FILE" 2>&1
 
     mount "$LOOP_MAP" "$MOUNT_POINT"
     mkdir -p "$MOUNT_POINT/boot/efi"
@@ -2052,7 +2053,8 @@ else
     [[ -b "$LOOP_MAP" ]] || die "Partition device $LOOP_MAP did not appear."
 
     log "Formatting partition ($LOOP_MAP)..."
-    mkfs.ext4 -F "$LOOP_MAP" >> "$LOG_FILE" 2>&1
+    # Disable metadata_csum (FEATURE_C12) at creation time to ensure initramfs compatibility
+    mkfs.ext4 -F -O ^metadata_csum "$LOOP_MAP" >> "$LOG_FILE" 2>&1
 
     mount "$LOOP_MAP" "$MOUNT_POINT"
 fi
@@ -2537,6 +2539,10 @@ for mp in dev/pts dev proc sys; do
 done
 umount -lf "$MOUNT_POINT" 2>/dev/null || true
 
+# Disable metadata_csum FIRST (before e2fsck) to prevent FEATURE_C12 boot failures.
+log "Disabling metadata_csum ext4 feature for initramfs compatibility..."
+tune2fs -O ^metadata_csum "$LOOP_MAP" >> "$LOG_FILE" 2>&1 || true
+
 # Run a final offline filesystem check before import so first VM boot does not
 # start in a degraded read-only state due to journal/superblock inconsistencies.
 log "Running final filesystem check on root partition..."
@@ -2548,11 +2554,6 @@ fi
 if (( FSCK_RC > 0 )); then
     warn "e2fsck corrected filesystem issues on $LOOP_MAP (exit $FSCK_RC)."
 fi
-
-# Disable metadata_csum (FEATURE_C12) which initramfs busybox e2fsck cannot handle.
-# Without this, converted VMs fail to boot with "unsupported feature" errors.
-log "Disabling metadata_csum ext4 feature for initramfs compatibility..."
-tune2fs -O ^metadata_csum "$LOOP_MAP" >> "$LOG_FILE" 2>&1 || true
 
 # Allow kernel time to release the device after unmount
 sync
