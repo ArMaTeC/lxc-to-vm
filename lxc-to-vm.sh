@@ -2273,6 +2273,7 @@ apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus 2>/
     || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --recheck --no-nvram --force --removable
 update-grub
+systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service 2>/dev/null || true
 DEBIAN_EFI
         else
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_BIOS
@@ -2282,6 +2283,7 @@ apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus 2>/dev/nul
     || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus
 grub-install --target=i386-pc --recheck --force "${LOOP_DEV}"
 update-grub
+systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service 2>/dev/null || true
 DEBIAN_BIOS
         fi
         ;;
