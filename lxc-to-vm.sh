@@ -2549,6 +2549,11 @@ if (( FSCK_RC > 0 )); then
     warn "e2fsck corrected filesystem issues on $LOOP_MAP (exit $FSCK_RC)."
 fi
 
+# Disable metadata_csum (FEATURE_C12) which initramfs busybox e2fsck cannot handle.
+# Without this, converted VMs fail to boot with "unsupported feature" errors.
+log "Disabling metadata_csum ext4 feature for initramfs compatibility..."
+tune2fs -O ^metadata_csum "$LOOP_MAP" >> "$LOG_FILE" 2>&1 || true
+
 # Allow kernel time to release the device after unmount
 sync
 sleep 2
