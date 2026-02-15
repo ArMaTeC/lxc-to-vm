@@ -2121,17 +2121,13 @@ cp -L /etc/resolv.conf "$MOUNT_POINT/etc/resolv.conf" 2>/dev/null || true
 # --- Detect distro inside the container ---
 DISTRO_FAMILY="unknown"
 if [[ -f "$MOUNT_POINT/etc/os-release" ]]; then
-    # Parse os-release defensively. Some containers ship malformed files that can
-    # break `source` under `set -e`, which would abort conversion before VM creation.
-    # On parse failure, fall back to "unknown" and continue.
-    DISTRO_ID=$(
-        unset VERSION 2>/dev/null || true
-        if . "$MOUNT_POINT/etc/os-release" 2>/dev/null; then
-            echo "${ID:-unknown}"
-        else
-            echo "unknown"
-        fi
-    )
+    # Parse os-release without sourcing it. Sourcing can fail when this script's
+    # readonly VERSION constant conflicts with VERSION=... inside os-release.
+    DISTRO_ID="$(awk -F= '$1=="ID"{print $2; exit}' "$MOUNT_POINT/etc/os-release" 2>/dev/null || true)"
+    DISTRO_ID="${DISTRO_ID//\"/}"
+    DISTRO_ID="${DISTRO_ID//\'/}"
+    DISTRO_ID="${DISTRO_ID,,}"
+    [[ -n "$DISTRO_ID" ]] || DISTRO_ID="unknown"
     case "$DISTRO_ID" in
         debian|ubuntu|linuxmint|pop|kali|proxmox) DISTRO_FAMILY="debian" ;;
         alpine)                                    DISTRO_FAMILY="alpine" ;;
