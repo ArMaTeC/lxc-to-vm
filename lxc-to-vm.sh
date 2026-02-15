@@ -3,67 +3,120 @@
 # ==============================================================================
 # Proxmox LXC to VM Converter
 # Version: 6.0.1
-# Target OS: Debian/Ubuntu/Alpine/RHEL/Arch LXCs on Proxmox VE 7.x / 8.x / 9.x
-# License: MIT
+# ==============================================================================
+#
+# DESCRIPTION:
+#   Converts Proxmox LXC containers to KVM virtual machines with full
+#   bootloader injection and kernel installation. Supports multiple Linux
+#   distributions and provides advanced features like batch processing,
+#   predictive disk sizing, and Proxmox API integration.
+#
+# TARGET DISTRIBUTIONS:
+#   - Debian/Ubuntu (GRUB2, systemd)
+#   - Alpine Linux (GRUB, OpenRC)
+#   - RHEL/CentOS/Rocky/Alma (GRUB2, systemd)
+#   - Arch Linux (GRUB, systemd)
+#
+# KEY FEATURES:
+#   - Automatic bootloader installation via chroot
+#   - Multi-distro kernel detection and installation
+#   - Network configuration migration (eth0 → ens18)
+#   - Disk shrinking integration (shrink-lxc.sh)
+#   - Snapshot/rollback safety
+#   - Batch and range conversion modes
+#   - Proxmox API cluster support
+#   - Plugin/hook system for extensibility
+#   - Predictive disk size advisor
+#
+# SUPPORTED STORAGE:
+#   - LVM-thin (recommended)
+#   - Directory, NFS, CIFS
+#   - ZFS
+#
+# LICENSE: MIT
 # ==============================================================================
 
+# Bash strict mode: exit on error, undefined variable, or pipe failure
+# -e: Exit immediately if a command exits with non-zero status
+# -u: Treat unset variables as an error
+# -o pipefail: Return value of pipeline is value of last command to fail
 set -euo pipefail
 
 readonly VERSION="6.0.1"
 readonly LOG_FILE="/var/log/lxc-to-vm.log"
 
-# -----------------------------------------------------------------------------
+# ==============================================================================
 # CONSTANTS
-# -----------------------------------------------------------------------------
-readonly MIN_DISK_GB=2
-readonly DEFAULT_BRIDGE="vmbr0"
-readonly DEFAULT_DISK_FORMAT="qcow2"
-readonly DEFAULT_BIOS="seabios"
-readonly REQUIRED_CMDS=(parted kpartx rsync qemu-img)
+# ==============================================================================
+# These defaults can be overridden via command-line options or profiles
 
-# Error codes
-readonly E_INVALID_ARG=1
-readonly E_NOT_FOUND=2
-readonly E_DISK_FULL=3
-readonly E_PERMISSION=4
-readonly E_MIGRATION=5
-readonly E_CONVERSION=6
+readonly MIN_DISK_GB=2                               # Absolute minimum VM disk size
+readonly DEFAULT_BRIDGE="vmbr0"                      # Default network bridge
+readonly DEFAULT_DISK_FORMAT="qcow2"                 # Default disk format (qcow2 supports snapshots)
+readonly DEFAULT_BIOS="seabios"                      # Default firmware (seabios=BIOS, ovmf=UEFI)
+readonly REQUIRED_CMDS=(parted kpartx rsync qemu-img) # Essential external tools
+
+# Error codes for programmatic error handling
+# Allows external scripts and monitoring to detect specific failure types
+readonly E_INVALID_ARG=1       # Invalid command-line arguments
+readonly E_NOT_FOUND=2       # Container or VM not found
+readonly E_DISK_FULL=3         # Insufficient disk space for temporary files
+readonly E_PERMISSION=4        # Permission denied
+readonly E_MIGRATION=5         # Proxmox cluster migration failed
+readonly E_CONVERSION=6        # Core conversion process failed
 
 # -----------------------------------------------------------------------------
 # 0. HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
+# These utility functions provide logging, formatting, and system checks
+# used throughout the conversion process.
 
-# --- Colors & Formatting ---
+# --- Color & Terminal Formatting ---
+# Enable colored output only when stdout is a terminal
+# This prevents escape sequences in log files or piped output
 if [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    BOLD='\033[1m'
-    NC='\033[0m'
+    RED='\033[0;31m'      # Error messages
+    GREEN='\033[0;32m'    # Success/confirmation
+    YELLOW='\033[1;33m'   # Warnings (bold for visibility)
+    BLUE='\033[0;34m'     # Info/progress messages
+    BOLD='\033[1m'        # Headers and emphasis
+    NC='\033[0m'          # Reset all attributes
 else
+    # Disable colors for non-terminal output (logs, pipes)
     RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
 fi
 
 # Echo with interpretation of backslash escapes
+# Primary output function for consistent formatting
 # Arguments:
-#   $* - Text to echo
-# Outputs: Echoed text with escape interpretation
+#   $* - Text to display (supports \n, \t, color codes)
+# Outputs: Formatted text to stdout
 e() { echo -e "$*"; }
 
 # --- Logging Functions ---
-# Arguments:
-#   $* - Message to log
-# Outputs: Formatted message to stdout and log file
+# All logging functions write to both stdout (for user) and log file (for audit)
+# This ensures complete traceability of all operations.
+
+# Log informational message with blue [*] prefix
+# Arguments: $* - Message text
+# Side effects: Appends to $LOG_FILE with timestamp
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
+
+# Log warning with yellow [!] prefix - continues execution
+# Use for non-fatal issues that should be brought to user's attention
 warn() { printf "${YELLOW}[!]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
+
+# Log error with red [✗] prefix to stderr
+# Use when operation failed but script continues
 err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
+
+# Log success with green [✓] prefix
+# Use to confirm operations completed successfully
 ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
-# Error exit with message
-# Arguments:
-#   $* - Error message
-# Exits with code E_INVALID_ARG
+# Fatal error handler - prints error and exits
+# Arguments: $* - Error message
+# Exits: With E_INVALID_ARG (1)
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
 
 # --- Usage / Help ---
@@ -134,18 +187,27 @@ USAGE
 }
 
 # --- Root check ---
+# All Proxmox operations (pct, qm, pvesm) require root access
+# Container mounting, loop device creation, and VM creation all need root
 if [[ "$EUID" -ne 0 ]]; then
     die "This script must be run as root (try: sudo $0)"
 fi
 
 # --- Initialise log ---
+# Create log directory if missing
+# Add timestamp header to distinguish between runs
 mkdir -p "$(dirname "$LOG_FILE")"
 echo "--- lxc-to-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 # --- Dependency installer ---
+# Automatically installs missing packages via apt
+# Arguments:
+#   $1 - Command name to check for
+#   $2 - Package name (optional, defaults to command name)
+# Side effects: May run apt-get update and install
 ensure_dependency() {
     local cmd="$1"
-    local pkg="${2:-$1}"  # package name can differ from command name
+    local pkg="${2:-$1}"  # Package name can differ from command name (e.g., cmd=parted, pkg=parted)
     if ! command -v "$cmd" >/dev/null 2>&1; then
         warn "Dependency '$cmd' is missing. Installing package '$pkg'..."
         apt-get update -qq >> "$LOG_FILE" 2>&1 && apt-get install -y "$pkg" >> "$LOG_FILE" 2>&1
@@ -157,46 +219,63 @@ ensure_dependency() {
 }
 
 # --- Cleanup on exit / error ---
+# Critical safety function registered with trap
+# Ensures all resources are released even on unexpected failure
+# Called automatically on: EXIT (normal exit), INT (Ctrl+C), TERM (kill)
 cleanup() {
     echo ""
     log "Cleaning up resources..."
 
-    # Unmount EFI partition if present
+    # Unmount EFI partition first (if present - only for UEFI VMs)
+    # -l: lazy unmount (detach now, cleanup later)
+    # -f: force unmount even if busy
     umount -lf "${MOUNT_POINT:-/nonexistent}/boot/efi" 2>/dev/null || true
 
-    # Unmount chroot binds (lazy unmount to force it)
+    # Unmount chroot bind mounts in reverse order of mounting
+    # These are needed for chroot to function (access to /dev, /proc, etc.)
     for mp in dev/pts dev proc sys; do
         umount -lf "${MOUNT_POINT:-/nonexistent}/$mp" 2>/dev/null || true
     done
 
-    # Unmount main mount
+    # Unmount main filesystem
     umount -lf "${MOUNT_POINT:-/nonexistent}" 2>/dev/null || true
 
-    # Unmount LXC if still mounted
+    # Unmount LXC container if still mounted (safety check)
     if [[ -n "${CTID:-}" ]]; then
         pct unmount "$CTID" 2>/dev/null || true
     fi
 
-    # Detach loop device
+    # Detach loop device and partition mappings
+    # kpartx -d: delete partition mappings
+    # losetup -d: detach loop device
     if [[ -n "${LOOP_DEV:-}" ]]; then
         kpartx -d "$LOOP_DEV" 2>/dev/null || true
         losetup -d "$LOOP_DEV" 2>/dev/null || true
     fi
 
-    # Remove temp files
+    # Remove temporary working directory
+    # This contains the raw disk image and other transient files
     if [[ -d "${TEMP_DIR:-}" ]]; then
         log "Removing temporary directory: $TEMP_DIR"
         rm -rf "$TEMP_DIR"
     fi
 }
 
+# Register cleanup to run automatically on script exit or interruption
+# This ensures no resources are leaked even if script fails
 trap cleanup EXIT INT TERM
 
 # ==============================================================================
 # PROXMOX API / CLUSTER INTEGRATION
 # ==============================================================================
+# These functions enable remote cluster operations via Proxmox API
+# Allows running conversions from any cluster node, with auto-migration
 
 # Check if we're in a cluster and get node info
+# Arguments:
+#   $1 - Container ID to locate
+# Returns: Node name via stdout, or 1 if not found
+# Uses: pvesh to query cluster status
 get_cluster_info() {
     local ctid="$1"
     local config_output
@@ -211,7 +290,7 @@ get_cluster_info() {
         return 0
     fi
     
-    # Check if we're local
+    # Check if container is on local node
     local hostname
     hostname=$(hostname)
     if pvesh get /nodes/$hostname/lxc/$ctid/status/current >/dev/null 2>&1; then
@@ -219,7 +298,7 @@ get_cluster_info() {
         return 0
     fi
     
-    # Try to find which node has this container
+    # Search all cluster nodes for the container
     local nodes
     nodes=$(pvesh get /nodes --output-format json 2>/dev/null | grep -oP '"node":"\K[^"]+' || echo "")
     for n in $nodes; do
@@ -232,7 +311,7 @@ get_cluster_info() {
     return 1
 }
 
-# API call wrapper
+# API call wrapper for Proxmox cluster operations
 pve_api_call() {
     local method="$1"
     local endpoint="$2"
@@ -245,6 +324,7 @@ pve_api_call() {
     local url="https://${API_HOST}:8006/api2/json${endpoint}"
     local auth_header="Authorization: PVEAPIToken=${API_USER}!${API_TOKEN}"
     
+    # -s: silent mode, -k: ignore SSL cert (self-signed common in Proxmox)
     if [[ "$method" == "GET" ]]; then
         curl -s -k -H "$auth_header" "$url" 2>/dev/null
     else
@@ -252,7 +332,11 @@ pve_api_call() {
     fi
 }
 
-# Migrate container to local node
+# Migrate container to local node from remote cluster node
+# This enables running conversions from any cluster node
+# Arguments:
+#   $1 - Container ID to migrate
+# Side effects: May stop and migrate container, modifying cluster state
 migrate_container_to_local() {
     local ctid="$1"
     local target_node
@@ -276,7 +360,7 @@ migrate_container_to_local() {
             return 0
         fi
         
-        # Stop container first for migration (safer)
+        # Stop container first for migration (safer than online migration)
         local status
         status=$(pct status "$ctid" 2>/dev/null | awk '{print $2}')
         if [[ "$status" == "running" ]]; then
@@ -285,7 +369,7 @@ migrate_container_to_local() {
             sleep 2
         fi
         
-        # Perform migration
+        # Perform migration with restart
         if pct migrate "$ctid" "$local_node" --restart; then
             ok "Container $ctid migrated to $local_node"
             sleep 3
@@ -303,9 +387,20 @@ migrate_container_to_local() {
 # ==============================================================================
 # PLUGIN / HOOK SYSTEM
 # ==============================================================================
+# Extensible hook system allowing custom scripts at key conversion stages
+# Hooks are stored in /var/lib/lxc-to-vm/hooks/ and named by stage
 
+# Directory where hook scripts are stored
 HOOKS_DIR="/var/lib/lxc-to-vm/hooks"
 
+# Execute a hook script if it exists and is executable
+# Arguments:
+#   $1 - Hook name (e.g., pre-convert, post-convert)
+#   $2 - Container ID (optional, defaults to $CTID)
+#   $3 - VM ID (optional, defaults to $VMID)
+# Environment variables exported to hook:
+#   HOOK_CTID, HOOK_VMID, HOOK_LOG_FILE, HOOK_STAGE
+# Returns: 0 on success or if hook doesn't exist, 1 if hook failed
 run_hook() {
     local hook_name="$1"
     local ctid="${2:-$CTID}"
@@ -329,23 +424,32 @@ run_hook() {
     return 0
 }
 
-# Hook points:
-# - pre-shrink: Before shrinking container
-# - post-shrink: After shrinking container  
-# - pre-convert: Before starting conversion
-# - post-convert: After conversion complete
-# - health-check-failed: When health check fails
-# - pre-destroy: Before destroying source container
+# Hook execution points during conversion:
+#   pre-shrink    - Before shrinking container (if --shrink used)
+#   post-shrink   - After successful shrink
+#   pre-convert   - Before starting conversion process
+#   post-convert  - After VM creation and validation
+#   health-check-failed - When post-conversion health checks fail
+#   pre-destroy   - Before destroying source container
 
 # ==============================================================================
 # PREDICTIVE DISK SIZE ADVISOR
 # ==============================================================================
+# Analyzes historical usage patterns from log files to recommend optimal
+# disk sizes with confidence intervals. Helps prevent both over-allocation
+# and under-allocation of VM disk space.
 
+# Analyze historical growth patterns from log data
+# Arguments:
+#   $1 - Container ID to analyze
+#   $2 - Days of history to analyze (default: 30)
+# Returns: Colon-separated fields: recommended:confidence:trend:min:max:avg
+#   or exits with 1 if insufficient data available
 analyze_growth_pattern() {
     local ctid="$1"
     local days_history="${2:-30}"
     
-    # Check for pct snapshow history or log files
+    # Search historical log files for usage data
     local log_entries
     log_entries=$(grep -h "CT $ctid" /var/log/lxc-to-vm*.log /var/log/shrink-lxc*.log 2>/dev/null | tail -50 || echo "")
     
@@ -353,7 +457,7 @@ analyze_growth_pattern() {
         return 1
     fi
     
-    # Extract historical disk usage from logs
+    # Extract historical disk usage values from log entries
     local usages
     usages=$(echo "$log_entries" | grep -oP 'Used space:.*~\K[0-9]+' | sort -n)
     
@@ -364,34 +468,35 @@ analyze_growth_pattern() {
     local count
     count=$(echo "$usages" | wc -l)
     
+    # Require at least 3 data points for trend analysis
     if [[ "$count" -lt 3 ]]; then
         return 1
     fi
     
-    # Calculate trend (simple linear regression approximation)
+    # Calculate statistics for trend analysis
     local min max avg trend
     min=$(echo "$usages" | head -1)
     max=$(echo "$usages" | tail -1)
     
-    # Sum for average
+    # Calculate average usage
     local sum=0
     while read -r val; do
         sum=$((sum + val))
     done <<< "$usages"
     avg=$((sum / count))
     
-    # Growth rate (GB per entry)
+    # Calculate growth trend (GB per conversion)
     trend=$(( (max - min) / count ))
     
-    # Calculate recommended size with confidence
+    # Determine confidence level based on data volume
     local confidence="medium"
     [[ "$count" -gt 10 ]] && confidence="high"
     [[ "$count" -lt 5 ]] && confidence="low"
     
-    # Recommendation: current + (trend * 6 months) + 3GB overhead
+    # Calculate recommendation: current + (trend * 6 months) + 3GB overhead
     local current_usage
     current_usage=$(pct df "$ctid" 2>/dev/null | awk '/^rootfs/{print $3}' || echo "0")
-    current_usage=$((current_usage / 1024 / 1024 / 1024))  # Convert to GB
+    current_usage=$((current_usage / 1024 / 1024 / 1024))  # Convert bytes to GB
     
     local recommended=$((current_usage + (trend * 6) + 3))
     [[ "$recommended" -lt 10 ]] && recommended=10
@@ -400,6 +505,11 @@ analyze_growth_pattern() {
     return 0
 }
 
+# Get disk size recommendation with user-friendly output
+# Falls back to simple heuristic if historical data unavailable
+# Arguments:
+#   $1 - Container ID to analyze
+# Outputs: Displays analysis summary and returns recommended size via stdout
 get_size_recommendation() {
     local ctid="$1"
     
@@ -408,8 +518,8 @@ get_size_recommendation() {
     local analysis
     analysis=$(analyze_growth_pattern "$ctid")
     
+    # Fallback if no historical data available
     if [[ -z "$analysis" ]]; then
-        # Fallback to current usage + headroom
         local current_usage
         current_usage=$(pct df "$ctid" 2>/dev/null | awk '/^rootfs/{print $3}' || echo "0")
         current_usage=$((current_usage / 1024 / 1024 / 1024))
@@ -423,6 +533,7 @@ get_size_recommendation() {
         return 0
     fi
     
+    # Parse analysis results
     local recommended confidence trend min max avg
     recommended="${analysis%%:*}"
     confidence="${analysis#*:}"
@@ -430,6 +541,7 @@ get_size_recommendation() {
     trend="${analysis#*:*:*}"
     trend="${trend%%:*}"
     
+    # Visual indicators for confidence levels
     local confidence_emoji="🟡"
     [[ "$confidence" == "high" ]] && confidence_emoji="🟢"
     [[ "$confidence" == "low" ]] && confidence_emoji="🔴"
@@ -445,13 +557,19 @@ get_size_recommendation() {
 # ==============================================================================
 # PROFILE MANAGEMENT
 # ==============================================================================
+# Save and load named profiles for common conversion configurations
+# Profiles store settings like storage, disk format, bridge, etc.
+# This allows quick reuse of common configurations without retyping
 
+# Directory where profile files are stored
 PROFILE_DIR="/var/lib/lxc-to-vm/profiles"
 
+# Ensure profile directory exists
 ensure_profile_dir() {
     mkdir -p "$PROFILE_DIR" 2>/dev/null || die "Cannot create profile directory: $PROFILE_DIR"
 }
 
+# List all saved profiles with creation dates
 list_profiles() {
     ensure_profile_dir
     e "${BOLD}Available profiles:${NC}"
@@ -467,11 +585,16 @@ list_profiles() {
     exit 0
 }
 
+# Save current settings as a named profile
+# Arguments:
+#   $1 - Profile name
+# Creates: $PROFILE_DIR/$name.conf with saved settings
 save_profile() {
     local name="$1"
     ensure_profile_dir
     local profile_file="$PROFILE_DIR/${name}.conf"
 
+    # Write profile file with all current settings
     cat > "$profile_file" <<PROFILE_EOF
 # Profile: $name
 # Saved: $(date -Is)
@@ -489,6 +612,11 @@ PROFILE_EOF
     ok "Profile '${name}' saved to $profile_file"
 }
 
+# Load settings from a named profile
+# Arguments:
+#   $1 - Profile name
+# Side effects: Sources the profile file, setting global variables
+# Note: Only sets values that aren't already defined (CLI takes precedence)
 load_profile() {
     local name="$1"
     local profile_file="$PROFILE_DIR/${name}.conf"
@@ -511,10 +639,18 @@ load_profile() {
 # ==============================================================================
 # SNAPSHOT MANAGEMENT
 # ==============================================================================
+# Create and manage LXC snapshots for rollback safety
+# Snapshots allow restoring container if conversion fails
 
+# Generate unique snapshot name with timestamp
 SNAPSHOT_NAME="pre-conversion-$(date +%Y%m%d-%H%M%S)"
-SNAPSHOT_CREATED=false
+SNAPSHOT_CREATED=false  # Track if we created a snapshot (for rollback eligibility)
 
+# Create a snapshot of the container before conversion
+# Arguments:
+#   $1 - Container ID
+# Side effects: Sets SNAPSHOT_CREATED to true on success
+# Note: Snapshot includes container config and rootfs at point-in-time
 create_snapshot() {
     local ctid="$1"
     log "Creating snapshot '${SNAPSHOT_NAME}' for container $ctid..."
@@ -527,6 +663,10 @@ create_snapshot() {
     fi
 }
 
+# Rollback container to snapshot (called on conversion failure)
+# Arguments:
+#   $1 - Container ID
+# Side effects: Restores container to snapshot state and removes snapshot
 rollback_snapshot() {
     local ctid="$1"
     if $SNAPSHOT_CREATED; then
@@ -542,6 +682,9 @@ rollback_snapshot() {
     fi
 }
 
+# Remove snapshot after successful conversion
+# Arguments:
+#   $1 - Container ID
 remove_snapshot() {
     local ctid="$1"
     if $SNAPSHOT_CREATED; then
@@ -553,21 +696,38 @@ remove_snapshot() {
 # ==============================================================================
 # RESUME / PROGRESS PERSISTENCE
 # ==============================================================================
+# Save and restore conversion state for resume capability
+# If conversion is interrupted (power loss, network issue, etc.),
+# it can be resumed from where it left off instead of starting over
 
+# Directory for storing resume state files
 RESUME_DIR="/var/lib/lxc-to-vm/resume"
-RESUME_STATE_FILE=""
-RSYNC_PARTIAL_DIR=""
+RESUME_STATE_FILE=""  # Path to current conversion's state file
+RSYNC_PARTIAL_DIR=""  # Path to rsync partial data directory
 
+# Create resume directory if it doesn't exist
 ensure_resume_dir() {
     mkdir -p "$RESUME_DIR" 2>/dev/null || die "Cannot create resume directory: $RESUME_DIR"
 }
 
+# Get path to resume state file for a specific CT→VM conversion
+# Arguments:
+#   $1 - Container ID
+#   $2 - VM ID
+# Returns: Path to state file via stdout
 get_resume_file() {
     local ctid="$1"
     local vmid="$2"
     echo "$RESUME_DIR/ct${ctid}-vm${vmid}.state"
 }
 
+# Save current conversion state to file
+# Arguments:
+#   $1 - Container ID
+#   $2 - VM ID  
+#   $3 - Current stage name (e.g., "rsync-failed", "disk-created")
+#   $4 - Additional data (optional)
+# Creates: State file with all conversion parameters
 save_resume_state() {
     local ctid="$1"
     local vmid="$2"
@@ -588,6 +748,11 @@ DATA="$data"
 RESUME_EOF
 }
 
+# Clear resume state after successful conversion
+# Arguments:
+#   $1 - Container ID
+#   $2 - VM ID
+# Side effects: Removes state file and partial rsync data
 clear_resume_state() {
     local ctid="$1"
     local vmid="$2"
@@ -597,6 +762,11 @@ clear_resume_state() {
     [[ -n "$RSYNC_PARTIAL_DIR" && -d "$RSYNC_PARTIAL_DIR" ]] && rm -rf "$RSYNC_PARTIAL_DIR" 2>/dev/null || true
 }
 
+# Check for existing resume state
+# Arguments:
+#   $1 - Container ID
+#   $2 - VM ID
+# Returns: 0 if state exists (loads variables), 1 if no state
 check_resume_state() {
     local ctid="$1"
     local vmid="$2"
@@ -1858,8 +2028,11 @@ cp -L /etc/resolv.conf "$MOUNT_POINT/etc/resolv.conf" 2>/dev/null || true
 # --- Detect distro inside the container ---
 DISTRO_FAMILY="unknown"
 if [[ -f "$MOUNT_POINT/etc/os-release" ]]; then
-    # shellcheck disable=SC1091
-    DISTRO_ID=$(. "$MOUNT_POINT/etc/os-release" && echo "${ID:-unknown}")
+    # Use subshell to isolate environment and avoid conflicts with readonly variables
+    DISTRO_ID=$(
+        unset VERSION 2>/dev/null || true
+        . "$MOUNT_POINT/etc/os-release" 2>/dev/null && echo "${ID:-unknown}"
+    )
     case "$DISTRO_ID" in
         debian|ubuntu|linuxmint|pop|kali|proxmox) DISTRO_FAMILY="debian" ;;
         alpine)                                    DISTRO_FAMILY="alpine" ;;

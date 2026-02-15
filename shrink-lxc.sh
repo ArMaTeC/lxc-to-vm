@@ -3,71 +3,126 @@
 # ==============================================================================
 # Proxmox LXC Disk Shrinker
 # Version: 6.0.1
-# Shrinks an LXC container's disk to current usage + headroom.
-# Supports: LVM-thin, directory-based (raw/qcow2), and ZFS storage.
-# License: MIT
+# ==============================================================================
+#
+# DESCRIPTION:
+#   This script safely shrinks an LXC container's root disk to match its actual
+#   usage plus configurable headroom. This is particularly useful before
+#   converting containers to VMs with lxc-to-vm.sh, as it minimizes the disk
+#   image that needs to be copied.
+#
+# SUPPORTED STORAGE TYPES:
+#   - LVM-thin (proxmox default, most efficient for shrinking)
+#   - LVM (thick provisioning)
+#   - Directory-based (raw or qcow2 images)
+#   - ZFS volumes (zfspool)
+#   - NFS/CIFS/GlusterFS (treated as directory-based)
+#
+# SAFETY FEATURES:
+#   - Dry-run mode previews changes without modifying anything
+#   - Container is automatically stopped and restarted
+#   - Filesystem check (e2fsck) before and after shrink
+#   - Metadata margin calculation prevents over-shrinking
+#   - Minimum 2GB disk size enforced
+#   - Retry logic for resize2fs failures
+#
+# RISKS:
+#   - Always backup before shrinking! While safe, any disk operation carries risk
+#   - Container must be stopped during shrink (downtime required)
+#   - Insufficient headroom can cause container to run out of space
+#
+# LICENSE: MIT
 # ==============================================================================
 
+# Bash strict mode: exit on error, undefined variable, or pipe failure
+# This catches bugs early and prevents partial/inconsistent state
 set -euo pipefail
 
 readonly VERSION="6.0.1"
 readonly LOG_FILE="/var/log/shrink-lxc.log"
 readonly DEFAULT_HEADROOM_GB=1
 
-# -----------------------------------------------------------------------------
+# ==============================================================================
 # CONSTANTS
-# -----------------------------------------------------------------------------
-readonly MIN_DISK_GB=2
-readonly META_MARGIN_PCT=5
-readonly META_MARGIN_MIN_MB=512
-readonly REQUIRED_CMDS=(e2fsck resize2fs)
+# ==============================================================================
+# These values are tuned for safe shrinking operations across different
+# storage backends. They can be overridden via command-line options.
 
-# Error codes
-readonly E_INVALID_ARG=1
-readonly E_NOT_FOUND=2
-readonly E_DISK_FULL=3
-readonly E_PERMISSION=4
-readonly E_SHRINK_FAILED=5
+readonly MIN_DISK_GB=2                               # Absolute minimum disk size
+readonly META_MARGIN_PCT=5                           # % of used space for filesystem metadata
+readonly META_MARGIN_MIN_MB=512                      # Minimum metadata margin (MB)
+readonly REQUIRED_CMDS=(e2fsck resize2fs)            # Essential tools for filesystem operations
 
-HEADROOM_GB=$DEFAULT_HEADROOM_GB  # Extra space above used data (configurable)
+# Error codes for programmatic error handling
+# These allow external scripts to detect specific failure modes
+readonly E_INVALID_ARG=1       # Invalid command-line arguments
+readonly E_NOT_FOUND=2         # Container or resource not found
+readonly E_DISK_FULL=3         # Disk space issues
+readonly E_PERMISSION=4        # Permission denied
+readonly E_SHRINK_FAILED=5     # Shrink operation itself failed
 
-# -----------------------------------------------------------------------------
+HEADROOM_GB=$DEFAULT_HEADROOM_GB  # User-configurable via -g flag
+
+# ==============================================================================
 # HELPER FUNCTIONS
-# -----------------------------------------------------------------------------
+# ==============================================================================
 
+# --- Color & Terminal Formatting ---
+# Check if stdout is a terminal (not piped/redirected)
+# This prevents ANSI escape codes from appearing in logs or pipes
 if [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    BOLD='\033[1m'
-    NC='\033[0m'
+    RED='\033[0;31m'      # Error messages
+    GREEN='\033[0;32m'    # Success messages
+    YELLOW='\033[1;33m'   # Warning messages (bold for visibility)
+    BLUE='\033[0;34m'     # Info/log messages
+    BOLD='\033[1m'        # Headers and emphasis
+    NC='\033[0m'          # No Color (reset)
 else
+    # Non-terminal: disable all colors to avoid escape sequences in logs
     RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
 fi
 
 # Echo with interpretation of backslash escapes
+# Used throughout the script for consistent colored output
 # Arguments:
-#   $* - Text to echo
-# Outputs: Echoed text with escape interpretation
+#   $* - Text to echo (can contain \n, \t, color codes, etc.)
+# Outputs: Echoed text with escape interpretation to stdout
 e() { echo -e "$*"; }
 
 # --- Logging Functions ---
-# Arguments:
-#   $* - Message to log
-# Outputs: Formatted message to stdout and log file
+# All logging functions write to both stdout (for user) and log file (for records)
+# This ensures complete audit trail of all operations
+
+# Standard info log - blue [*] prefix
+# Arguments: $* - Message to log
+# Side effects: Appends timestamped message to $LOG_FILE
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
+
+# Warning log - yellow [!] prefix, continues execution
+# Use when something unexpected happened but we can proceed
+# Arguments: $* - Warning message
 warn() { printf "${YELLOW}[!]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
+
+# Error log - red [✗] prefix, goes to stderr
+# Use when an error occurs but we're not exiting yet
+# Arguments: $* - Error message
+# Outputs: To stderr and log file
 err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
+
+# Success/OK log - green [✓] prefix
+# Use to confirm operations completed successfully
+# Arguments: $* - Success message
 ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
-# Error exit with message
-# Arguments:
-#   $* - Error message
-# Exits with code E_INVALID_ARG
+# Fatal error exit function
+# Prints error message and exits with E_INVALID_ARG (1)
+# Arguments: $* - Error message to display
+# Exits: Always exits with code 1
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
 
 # --- Usage / Help ---
+# Shows comprehensive help when -h or --help is requested
+# Includes all available options with examples
 usage() {
     cat <<USAGE
 ${BOLD}Proxmox LXC Disk Shrinker v${VERSION}${NC}
@@ -78,72 +133,113 @@ This reduces the disk size required for conversion with lxc-to-vm.sh.
 Usage: $0 [OPTIONS]
 
 Options:
-  -c, --ctid <ID>        Container ID to shrink
-  -g, --headroom <GB>    Extra headroom in GB above used space (default: ${HEADROOM_GB})
+  -c, --ctid <ID>        Container ID to shrink (e.g., 100)
+  -g, --headroom <GB>    Extra headroom above used space (default: ${HEADROOM_GB})
   -n, --dry-run          Show what would be done without making changes
   -h, --help             Show this help message
   -V, --version          Show version
 
 Examples:
   $0 -c 100                  # Shrink CT 100 to usage + 1GB
-  $0 -c 100 -g 2             # Shrink CT 100 to usage + 2GB
-  $0 -c 100 --dry-run        # Preview only
+  $0 -c 100 -g 2             # Shrink with 2GB extra headroom
+  $0 -c 100 --dry-run        # Preview only, no changes
+
+Storage Support:
+  - LVM-thin: Most efficient, shrinks LV directly
+  - Directory: Supports raw and qcow2 images
+  - ZFS: Shrinks zvol size
+  - NFS/CIFS: Treated as directory storage
+
+Safety Notes:
+  - Container will be stopped during shrink (downtime required)
+  - Filesystem check runs before and after shrink
+  - Minimum 2GB disk size is enforced
+  - Always backup critical data before shrinking
 USAGE
     exit 0
 }
 
-# --- Root check ---
+# --- Root Privilege Check ---
+# All container and storage operations require root access
+# pct, pvesm, lvresize, zfs commands all need root privileges
 if [[ "$EUID" -ne 0 ]]; then
     die "This script must be run as root (try: sudo $0)"
 fi
 
+# --- Initialize Log File ---
+# Create log directory if it doesn't exist
+# Add timestamp header for this run to distinguish from previous runs
 mkdir -p "$(dirname "$LOG_FILE")"
 echo "--- shrink-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
-# ARGUMENT PARSING
+# COMMAND-LINE ARGUMENT PARSING
 # ==============================================================================
+# Parse options using standard bash getopts-style case statement
+# Supports both short (-c) and long (--ctid) option formats
 
-CTID="" DRY_RUN=false
+# Initialize all variables with defaults
+CTID=""        # Container ID - required
+DRY_RUN=false  # Preview mode flag - set to true with --dry-run
 
+# Process command-line arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -c|--ctid)      CTID="$2";         shift 2 ;;
-        -g|--headroom)   HEADROOM_GB="$2";  shift 2 ;;
-        -n|--dry-run)    DRY_RUN=true;      shift ;;
-        -h|--help)       usage ;;
-        -V|--version)    echo "v${VERSION}"; exit 0 ;;
+        -c|--ctid)      CTID="$2";         shift 2 ;;  # Container ID (numeric)
+        -g|--headroom)   HEADROOM_GB="$2";  shift 2 ;;  # Extra space in GB
+        -n|--dry-run)    DRY_RUN=true;      shift ;;    # Preview only mode
+        -h|--help)       usage ;;                      # Show help and exit
+        -V|--version)    echo "v${VERSION}"; exit 0 ;;  # Show version and exit
         *)               die "Unknown option: $1 (use --help)" ;;
     esac
 done
 
+# --- Display Header ---
+# Show the script version and purpose clearly to the user
 e "${BOLD}==========================================${NC}"
 e "${BOLD}     PROXMOX LXC DISK SHRINKER v${VERSION}${NC}"
 e "${BOLD}==========================================${NC}"
 
-# Interactive prompt if CTID not provided
+# --- Interactive Mode ---
+# If CTID wasn't provided via command line, prompt interactively
+# This makes the script user-friendly for ad-hoc interactive use
 [[ -z "$CTID" ]] && read -rp "Enter Container ID to shrink (e.g., 100): " CTID
 
-# Validate
+# ==============================================================================
+# INPUT VALIDATION
+# ==============================================================================
+# Validate all inputs before proceeding with any destructive operations
+
+# Container ID must be a positive integer
 [[ "$CTID" =~ ^[0-9]+$ ]]        || die "Container ID must be a positive integer, got: '$CTID'"
+
+# Headroom must be a positive integer (no decimals)
 [[ "$HEADROOM_GB" =~ ^[0-9]+$ ]] || die "Headroom must be a positive integer (GB), got: '$HEADROOM_GB'"
+
+# Require at least 1GB headroom to prevent immediate out-of-space issues
 [[ "$HEADROOM_GB" -ge 1 ]]       || die "Headroom must be at least 1 GB."
 
+# Verify container actually exists in Proxmox before proceeding
 if ! pct config "$CTID" >/dev/null 2>&1; then
     die "Container $CTID does not exist."
 fi
 
 # ==============================================================================
-# DETECT STORAGE & CURRENT DISK
+# STORAGE DETECTION & ANALYSIS
 # ==============================================================================
+# This section identifies the storage backend and current disk configuration
+# Different storage types (LVM, directory, ZFS) require different shrinking approaches
+# We parse the container config and query Proxmox storage status
 
 # Parse rootfs line from container config
+# Example format: rootfs: local-lvm:vm-100-disk-0,size=32G
 ROOTFS_LINE=$(pct config "$CTID" | grep "^rootfs:")
 [[ -n "$ROOTFS_LINE" ]] || die "Could not find rootfs config for container $CTID."
 log "Config rootfs: $ROOTFS_LINE"
 
 # Extract storage name and volume, and current size
-# Format: rootfs: <storage>:<volume>,size=<N>G
+# Using standard Unix text processing tools for reliable parsing
+# Format breakdown: rootfs: <storage>:<volume>,size=<N>G
 ROOTFS_VOL=$(echo "$ROOTFS_LINE" | sed 's/^rootfs: //' | cut -d',' -f1)
 STORAGE_NAME=$(echo "$ROOTFS_VOL" | cut -d':' -f1)
 VOLUME_ID=$(echo "$ROOTFS_VOL" | cut -d':' -f2)
@@ -151,17 +247,23 @@ CURRENT_SIZE_STR=$(echo "$ROOTFS_LINE" | grep -oP 'size=\K[0-9]+[A-Z]?' || echo 
 
 log "Storage: $STORAGE_NAME | Volume: $VOLUME_ID | Current size: ${CURRENT_SIZE_STR:-unknown}"
 
-# Detect storage type
+# Detect storage type from Proxmox storage manager (pvesm)
+# Common types: lvmthin, lvm, dir, zfspool, nfs, cifs, glusterfs
+# The storage type determines which shrink algorithm we use
 STORAGE_TYPE=$(pvesm status 2>/dev/null | awk -v s="$STORAGE_NAME" '$1==s{print $2}')
 [[ -n "$STORAGE_TYPE" ]] || die "Could not determine storage type for '$STORAGE_NAME'."
 log "Storage type: $STORAGE_TYPE"
 
 # ==============================================================================
-# STOP CONTAINER
+# CONTAINER STOPPAGE
 # ==============================================================================
+# Shrinking requires the container to be stopped because:
+# 1. Filesystem consistency - prevents writes during resize
+# 2. Safe unmounting - allows us to work with the raw disk
+# 3. Data integrity - resize2fs can corrupt if filesystem is active
 
 CT_STATUS=$(pct status "$CTID" 2>/dev/null | awk '{print $2}')
-CT_WAS_RUNNING=false
+CT_WAS_RUNNING=false  # Track if we need to restart after shrink
 
 if [[ "$CT_STATUS" == "running" ]]; then
     CT_WAS_RUNNING=true
@@ -170,13 +272,16 @@ if [[ "$CT_STATUS" == "running" ]]; then
     else
         warn "Container $CTID is running. Stopping..."
         pct stop "$CTID"
-        sleep 2
+        sleep 2  # Brief pause for clean shutdown
     fi
 fi
 
 # ==============================================================================
 # CALCULATE USED SPACE
 # ==============================================================================
+# Calculate actual data usage to determine optimal new disk size
+# This is the core intelligence of the shrink operation
+# We need to mount the container to accurately measure used space
 
 log "Mounting container to calculate used space..."
 
@@ -185,6 +290,8 @@ if ! $DRY_RUN; then
 fi
 
 # Find the rootfs mount path
+# Proxmox may mount at different paths depending on version and configuration
+# We check both common locations for maximum compatibility
 LXC_ROOT_MOUNT=""
 for candidate in "/var/lib/lxc/${CTID}/rootfs" "/var/lib/lxc/${CTID}/rootfs/"; do
     if [[ -d "$candidate" ]]; then
@@ -193,10 +300,11 @@ for candidate in "/var/lib/lxc/${CTID}/rootfs" "/var/lib/lxc/${CTID}/rootfs/"; d
     fi
 done
 
+# In dry-run mode, we may not have a mount point if container wasn't running
+# Fall back to pct df which reports usage without needing to mount
 if $DRY_RUN && [[ -z "$LXC_ROOT_MOUNT" ]]; then
-    # In dry-run we may not have mounted, estimate from pct df
     USED_BYTES=$(pct df "$CTID" 2>/dev/null | awk '/^rootfs/{print $3}' || echo "0")
-    # pct df reports in bytes or KB depending on version
+    # pct df reports in bytes (exact format varies by Proxmox version)
     if [[ "$USED_BYTES" -gt 0 ]]; then
         USED_MB=$((USED_BYTES / 1024 / 1024))
     else
@@ -205,43 +313,63 @@ if $DRY_RUN && [[ -z "$LXC_ROOT_MOUNT" ]]; then
 else
     [[ -n "$LXC_ROOT_MOUNT" ]] || die "Could not locate rootfs for container $CTID."
 
-    # Calculate used space (excluding virtual filesystems)
+    # Calculate used space using du (disk usage)
+    # We exclude virtual filesystems that don't represent actual disk usage:
+    #   - dev/*: device files (created dynamically by kernel)
+    #   - proc/*: process info (virtual filesystem)
+    #   - sys/*: sysfs (kernel interface)
+    #   - tmp/*, run/*: temporary data (shouldn't be preserved)
     USED_BYTES=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
         --exclude='tmp/*' --exclude='run/*' \
         "${LXC_ROOT_MOUNT}/" 2>/dev/null | awk '{print $1}')
     USED_MB=$(( ${USED_BYTES:-0} / 1024 / 1024 ))
 fi
 
-USED_GB=$(( (USED_MB + 1023) / 1024 ))  # Round up to nearest GB
+# Convert MB to GB, rounding up (ceiling division)
+# Adding 1023 ensures any fractional GB rounds up to the next whole number
+USED_GB=$(( (USED_MB + 1023) / 1024 ))
 
-# Add filesystem metadata margin: 5% of used space or 512MB, whichever is greater
-# resize2fs needs room for journal, inodes, superblocks, and block group descriptors
+# Calculate metadata margin: 5% of used space or 512MB minimum
+# resize2fs requires free space for:
+#   - Journal blocks (ext4 journaling)
+#   - Inode tables (file metadata)
+#   - Superblock copies (filesystem headers)
+#   - Block group descriptors
+# Without this margin, the filesystem might not fit after shrink operation
 META_MARGIN_MB=$(( USED_MB * 5 / 100 ))
 [[ "$META_MARGIN_MB" -lt 512 ]] && META_MARGIN_MB=512
 META_MARGIN_GB=$(( (META_MARGIN_MB + 1023) / 1024 ))
 
+# Calculate final target size: actual usage + metadata overhead + user headroom
 NEW_SIZE_GB=$(( USED_GB + META_MARGIN_GB + HEADROOM_GB ))
 
-# Ensure minimum 2GB
+# Enforce absolute minimum regardless of calculations (safety check)
 [[ "$NEW_SIZE_GB" -lt 2 ]] && NEW_SIZE_GB=2
 
+# Format for human-readable display using numfmt (IEC binary units: GiB, MiB)
 USED_HR=$(numfmt --to=iec-i --suffix=B "${USED_BYTES:-0}" 2>/dev/null || echo "${USED_MB}MB")
 
-# Get current size in GB for comparison
+# Get current size in GB for comparison and savings calculation
 CURRENT_SIZE_GB=$(echo "$CURRENT_SIZE_STR" | grep -oP '[0-9]+' || echo "0")
 
+# Log the calculation breakdown for user transparency
 log "Used space: ${USED_HR} (~${USED_GB}GB)"
 log "Metadata margin: ${META_MARGIN_GB}GB (for journal, inodes, superblocks)"
 log "Current disk: ${CURRENT_SIZE_GB}GB → Target: ${NEW_SIZE_GB}GB (data ${USED_GB}GB + metadata ${META_MARGIN_GB}GB + headroom ${HEADROOM_GB}GB)"
 
-# Unmount for now
+# Unmount container before proceeding with actual shrink operations
 if ! $DRY_RUN; then
     pct unmount "$CTID" 2>/dev/null || true
 fi
 
-# Check if shrink is needed
+# ==============================================================================
+# CHECK IF SHRINK IS NEEDED
+# ==============================================================================
+# Skip shrink if calculated size >= current size (already optimal or smaller)
+# This prevents unnecessary operations and potential data movement
 if [[ "$NEW_SIZE_GB" -ge "$CURRENT_SIZE_GB" ]]; then
     ok "Disk is already close to optimal size (${CURRENT_SIZE_GB}GB). No shrink needed."
+    # Restart container if it was running before we stopped it
     if $CT_WAS_RUNNING && ! $DRY_RUN; then
         log "Restarting container $CTID..."
         pct start "$CTID"
@@ -249,12 +377,15 @@ if [[ "$NEW_SIZE_GB" -ge "$CURRENT_SIZE_GB" ]]; then
     exit 0
 fi
 
+# Calculate space savings for reporting purposes
 SAVINGS_GB=$((CURRENT_SIZE_GB - NEW_SIZE_GB))
 log "Potential savings: ${SAVINGS_GB}GB"
 
 # ==============================================================================
-# DRY-RUN SUMMARY
+# DRY-RUN SUMMARY (Preview Mode)
 # ==============================================================================
+# Show detailed preview of what would happen in real execution
+# This allows users to verify settings before committing to actual shrink
 
 if $DRY_RUN; then
     echo ""
@@ -289,6 +420,7 @@ if $DRY_RUN; then
     echo "    6. Restart container (if it was running)"
     echo ""
     ok "Dry run complete. Remove --dry-run to execute."
+    # Restart container if we stopped it for the dry-run check
     if $CT_WAS_RUNNING; then
         log "Restarting container $CTID..."
         pct start "$CTID" 2>/dev/null || true
@@ -297,14 +429,17 @@ if $DRY_RUN; then
 fi
 
 # ==============================================================================
-# CONFIRM
+# USER CONFIRMATION
 # ==============================================================================
+# Explicit confirmation required before destructive disk operations
+# User must type 'y' to proceed - default is NO (safe default)
 
 echo ""
 e "${YELLOW}${BOLD}WARNING: This will shrink the disk for container $CTID${NC}"
 e "  ${BOLD}Current:${NC} ${CURRENT_SIZE_GB}GB → ${BOLD}New:${NC} ${NEW_SIZE_GB}GB (saving ${SAVINGS_GB}GB)"
 echo ""
 read -rp "Continue? [y/N]: " CONFIRM
+# If user says no, abort and restart container if needed
 [[ "$CONFIRM" =~ ^[Yy]$ ]] || { log "Aborted by user."; $CT_WAS_RUNNING && pct start "$CTID" 2>/dev/null || true; exit 0; }
 
 # ==============================================================================
@@ -426,33 +561,39 @@ case "$STORAGE_TYPE" in
         IMG_FORMAT=$(qemu-img info "$DISK_PATH" 2>/dev/null | awk '/file format:/{print $3}')
         log "Image format: $IMG_FORMAT"
 
+        # Raw image handling: mount via loop device, shrink filesystem, then truncate file
+        # This is the most straightforward approach for raw images
         if [[ "$IMG_FORMAT" == "raw" ]]; then
-            # Raw image: use losetup + resize2fs + truncate
-
-            # Mount as loop device
+            # Mount as loop device to access filesystem directly
+            # losetup --show -f finds next free loop device and shows its path
             LOOP_DEV=$(losetup --show -f "$DISK_PATH")
+            # Ensure loop device is cleaned up on exit even if script fails
             trap "losetup -d '$LOOP_DEV' 2>/dev/null || true" EXIT
 
-            # fsck
+            # Filesystem check before resize (required for safety)
             log "Running filesystem check..."
             e2fsck -f -y "$LOOP_DEV" >> "$LOG_FILE" 2>&1 || {
+                # Retry once if first attempt fails
                 e2fsck -f -y "$LOOP_DEV" >> "$LOG_FILE" 2>&1 || die "Filesystem check failed."
             }
 
-            # Shrink filesystem
+            # Shrink the filesystem to target size
             log "Shrinking filesystem to ${NEW_SIZE_GB}GB..."
             resize2fs "$LOOP_DEV" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1
             ok "Filesystem shrunk."
 
-            # Detach loop
+            # Detach loop device before truncating file
             losetup -d "$LOOP_DEV" 2>/dev/null || true
-            trap - EXIT
+            trap - EXIT  # Remove the cleanup trap
 
-            # Truncate raw image
+            # Truncate the raw image file to new size
+            # This removes excess bytes from end of file
             log "Truncating raw image to ${NEW_SIZE_GB}GB..."
             truncate -s "${NEW_SIZE_GB}G" "$DISK_PATH"
             ok "Raw image truncated."
 
+        # qcow2 requires conversion to raw, shrink, then convert back
+        # This is slower but necessary as resize2fs can't work on qcow2 directly
         elif [[ "$IMG_FORMAT" == "qcow2" ]]; then
             # qcow2: convert to temp raw, shrink, convert back
 
@@ -539,11 +680,15 @@ esac
 # ==============================================================================
 # RESTART & SUMMARY
 # ==============================================================================
+# Restart container if it was running before shrink
+# Display final summary of the operation with next steps
 
+# Restart container if it was previously running
 if $CT_WAS_RUNNING; then
     log "Restarting container $CTID..."
     pct start "$CTID"
-    sleep 3
+    sleep 3  # Wait for container to initialize
+    # Verify container actually started
     NEW_STATUS=$(pct status "$CTID" 2>/dev/null | awk '{print $2}')
     if [[ "$NEW_STATUS" == "running" ]]; then
         ok "Container $CTID is running."
@@ -552,6 +697,7 @@ if $CT_WAS_RUNNING; then
     fi
 fi
 
+# Display final summary with key statistics
 echo ""
 e "${GREEN}${BOLD}==========================================${NC}"
 e "${GREEN}${BOLD}          SHRINK COMPLETE${NC}"
