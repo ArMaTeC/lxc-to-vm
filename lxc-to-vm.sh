@@ -2344,8 +2344,8 @@ case "$DISTRO_FAMILY" in
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_EFI
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent
+apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent e2fsprogs 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent e2fsprogs
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --recheck --no-nvram --force --removable
 # Force rw root remount on boot. Some converted guests can otherwise remain on
 # kernel cmdline default 'ro' if remount service runs in a constrained context.
@@ -2355,14 +2355,18 @@ else
     echo 'GRUB_CMDLINE_LINUX_DEFAULT="rw quiet"' >> /etc/default/grub
 fi
 update-grub
+# Regenerate initramfs with full e2fsprogs to support modern ext4 features (metadata_csum)
+# instead of busybox e2fsck which fails on FEATURE_C12
+echo "e2fsprogs" >> /etc/initramfs-tools/modules 2>/dev/null || true
+update-initramfs -u -k all || update-initramfs -u
 systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service qemu-guest-agent.service 2>/dev/null || true
 DEBIAN_EFI
         else
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_BIOS
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent
+apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent e2fsprogs 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent e2fsprogs
 rm -f /tmp/lxc-to-vm-grub-bios-fallback.flag
 GRUB_INSTALL_OK=0
 if grub-install --target=i386-pc --recheck --force --skip-fs-probe "${LOOP_DEV}"; then
@@ -2381,6 +2385,10 @@ else
     echo 'GRUB_CMDLINE_LINUX_DEFAULT="rw quiet"' >> /etc/default/grub
 fi
 update-grub
+# Regenerate initramfs with full e2fsprogs to support modern ext4 features (metadata_csum)
+# instead of busybox e2fsck which fails on FEATURE_C12
+echo "e2fsprogs" >> /etc/initramfs-tools/modules 2>/dev/null || true
+update-initramfs -u -k all || update-initramfs -u
 systemctl enable getty@tty1.service serial-getty@ttyS0.service systemd-logind.service dbus.service qemu-guest-agent.service 2>/dev/null || true
 DEBIAN_BIOS
         fi
