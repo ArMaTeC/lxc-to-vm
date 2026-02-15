@@ -2072,7 +2072,34 @@ SRC_SIZE=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
 SRC_SIZE_HR=$(numfmt --to=iec-i --suffix=B "${SRC_SIZE:-0}" 2>/dev/null || echo "${SRC_SIZE:-0} bytes")
 log "Source size: ${SRC_SIZE_HR} — starting copy..."
 
+# Detect unprivileged LXC ID mapping so ownership can be normalized in VM.
+# Without this, files copied from an unprivileged CT can retain shifted host
+# IDs (e.g. 100000:100000), which breaks systemd and core boot services.
+declare -a RSYNC_IDMAP_ARGS=()
+CT_CONFIG_RAW="$(pct config "$CTID" 2>/dev/null || true)"
+if echo "$CT_CONFIG_RAW" | grep -qE '^unprivileged:\s*1'; then
+    UID_SHIFT_BASE="$(echo "$CT_CONFIG_RAW" | awk '$1=="lxc.idmap:" && $2=="u" && $3=="0" {print $4; exit}')"
+    UID_SHIFT_COUNT="$(echo "$CT_CONFIG_RAW" | awk '$1=="lxc.idmap:" && $2=="u" && $3=="0" {print $5; exit}')"
+    GID_SHIFT_BASE="$(echo "$CT_CONFIG_RAW" | awk '$1=="lxc.idmap:" && $2=="g" && $3=="0" {print $4; exit}')"
+    GID_SHIFT_COUNT="$(echo "$CT_CONFIG_RAW" | awk '$1=="lxc.idmap:" && $2=="g" && $3=="0" {print $5; exit}')"
+
+    [[ "$UID_SHIFT_BASE" =~ ^[0-9]+$ ]] || UID_SHIFT_BASE=100000
+    [[ "$UID_SHIFT_COUNT" =~ ^[0-9]+$ ]] || UID_SHIFT_COUNT=65536
+    [[ "$GID_SHIFT_BASE" =~ ^[0-9]+$ ]] || GID_SHIFT_BASE="$UID_SHIFT_BASE"
+    [[ "$GID_SHIFT_COUNT" =~ ^[0-9]+$ ]] || GID_SHIFT_COUNT="$UID_SHIFT_COUNT"
+
+    UID_SHIFT_END=$((UID_SHIFT_BASE + UID_SHIFT_COUNT - 1))
+    GID_SHIFT_END=$((GID_SHIFT_BASE + GID_SHIFT_COUNT - 1))
+
+    RSYNC_IDMAP_ARGS=(
+        "--usermap=${UID_SHIFT_BASE}-${UID_SHIFT_END}:0-$((UID_SHIFT_COUNT - 1))"
+        "--groupmap=${GID_SHIFT_BASE}-${GID_SHIFT_END}:0-$((GID_SHIFT_COUNT - 1))"
+    )
+    log "Detected unprivileged CT with ID mapping u:0->${UID_SHIFT_BASE} (${UID_SHIFT_COUNT}), g:0->${GID_SHIFT_BASE} (${GID_SHIFT_COUNT}); normalizing ownership during copy."
+fi
+
 rsync -axHAX --info=progress2 --no-inc-recursive \
+    "${RSYNC_IDMAP_ARGS[@]}" \
     --partial --partial-dir="${TEMP_DIR}/.rsync-partial" \
     --exclude='/dev/*' \
     --exclude='/proc/*' \
