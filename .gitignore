@@ -1,0 +1,20 @@
+# Test scripts with sensitive credentials
+test-remote-pve.sh
+sshpass.exe
+# Logs
+*.log
+/tmp/lxc-to-vm-*.log
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.code-workspace

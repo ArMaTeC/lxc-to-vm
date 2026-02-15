@@ -2540,8 +2540,17 @@ done
 umount -lf "$MOUNT_POINT" 2>/dev/null || true
 
 # Disable metadata_csum FIRST (before e2fsck) to prevent FEATURE_C12 boot failures.
+# Also disable related features that depend on metadata_csum.
 log "Disabling metadata_csum ext4 feature for initramfs compatibility..."
-tune2fs -O ^metadata_csum "$LOOP_MAP" >> "$LOG_FILE" 2>&1 || true
+tune2fs -O ^metadata_csum,^metadata_csum_seed,^orphan_file,^fast_commit "$LOOP_MAP" >> "$LOG_FILE" 2>&1 \
+    || die "Failed to disable metadata_csum on $LOOP_MAP. Check $LOG_FILE for details."
+
+# Debug: Verify the feature was actually disabled
+log "Verifying metadata_csum was disabled..."
+if tune2fs -l "$LOOP_MAP" | grep -q "metadata_csum"; then
+    die "metadata_csum feature is still enabled after tune2fs. Cannot proceed with FEATURE_C12 risk."
+fi
+log "Confirmed: metadata_csum is disabled."
 
 # Run a final offline filesystem check before import so first VM boot does not
 # start in a degraded read-only state due to journal/superblock inconsistencies.
