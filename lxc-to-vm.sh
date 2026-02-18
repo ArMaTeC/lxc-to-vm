@@ -2,7 +2,7 @@
 # shellcheck shell=bash
 # ==============================================================================
 # Proxmox LXC to VM Converter
-# Version: 6.0.2
+# Version: 6.0.3
 # ==============================================================================
 #
 # DESCRIPTION:
@@ -36,6 +36,13 @@
 # LICENSE: MIT
 # ==============================================================================
 
+# ==============================================================================
+# DEBUG MODE CONFIGURATION
+# ==============================================================================
+# Set LXC_TO_VM_DEBUG=1 environment variable to enable verbose debug output
+# This outputs detailed information about every operation for troubleshooting
+DEBUG=${LXC_TO_VM_DEBUG:-0}
+
 # Bash strict mode: exit on error, undefined variable, or pipe failure
 # -e: Exit immediately if a command exits with non-zero status
 # -E: Propagate ERR trap into functions/subshells
@@ -43,8 +50,15 @@
 # -o pipefail: Return value of pipeline is value of last command to fail
 set -Eeuo pipefail
 
-readonly VERSION="6.0.2"
-readonly LOG_FILE="/var/log/lxc-to-vm.log"
+readonly VERSION="6.0.3"
+# Enable debug mode for troubleshooting
+# Usage: LXC_TO_VM_DEBUG=1 ./lxc-to-vm.sh -c 100 -v 200
+if [[ "${LXC_TO_VM_DEBUG:-0}" -eq 1 ]]; then
+    debug "Debug mode enabled - verbose output active"
+fi
+
+# Dump system information at startup for debugging
+dump_system_info
 
 # ==============================================================================
 # CONSTANTS
@@ -1979,7 +1993,18 @@ pick_work_dir() {
     echo "$selected_path"
 }
 
+# Start of main conversion workflow
+# This is the core function that performs the actual LXC to VM conversion
+# It is called after all validation and setup is complete
 do_conversion() {
+    # Capture start time for performance metrics
+    local conversion_start_time=$(date +%s)
+    
+    # Dump container info for debugging
+    dump_container_info "$CTID"
+    
+    verbose "Starting main conversion workflow for CT $CTID → VM $VMID"
+    verbose "Configuration: storage=$STORAGE, disk=${DISK_SIZE}GB, format=$DISK_FORMAT, bios=$BIOS_TYPE"
 
 # Determine the working base directory
 WORK_BASE="${WORK_DIR:-$DEFAULT_WORK_BASE}"
@@ -2063,7 +2088,20 @@ fi
 # 4. DATA COPY
 # ==============================================================================
 
-log "Mounting LXC container $CTID..."
+# ==============================================================================
+# PHASE 1: CONTAINER DATA EXTRACTION
+# ==============================================================================
+# In this phase we:
+# 1. Mount the source container filesystem
+# 2. Calculate required disk space
+# 3. Create a raw disk image of appropriate size
+# 4. Partition and format the disk image
+# 5. Copy all container data to the new disk
+# ==============================================================================
+
+verbose "Phase 1: Container data extraction and disk preparation"
+
+log "Mounting source container $CTID..."
 pct mount "$CTID"
 
 # Detect rootfs mount path (handles both legacy and new paths)
@@ -2078,7 +2116,12 @@ done
 log "LXC rootfs found at: $LXC_ROOT_MOUNT"
 
 log "Calculating source size (scanning file list)..."
-SRC_SIZE=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
+# Calculate container used space
+# We exclude pseudo-filesystems and temporary directories to get accurate size
+verbose "Calculating container used space..."
+verbose "Excluding: dev, proc, sys, tmp, run, mnt, media, lost+found"
+
+USED_BYTES=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
     --exclude='tmp/*' --exclude='run/*' --exclude='mnt/*' \
     --exclude='media/*' --exclude='lost+found' \
     "${LXC_ROOT_MOUNT}/" 2>/dev/null | awk '{print $1}')
@@ -2229,11 +2272,17 @@ log "Detected distro family: $DISTRO_FAMILY (ID: ${DISTRO_ID:-unknown})"
 
 # --- Build the chroot script dynamically ---
 CHROOT_SCRIPT="$TEMP_DIR/chroot-setup.sh"
+debug "Creating chroot script at: $CHROOT_SCRIPT"
+debug "Chroot target directory: $MOUNT_POINT"
+debug "Distribution family: $DISTRO_FAMILY, BIOS type: $BIOS_TYPE"
+
 cat > "$CHROOT_SCRIPT" <<'CHROOT_HEADER'
 #!/bin/bash
 set -e
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 CHROOT_HEADER
+
+verbose "Building chroot setup script for $DISTRO_FAMILY..."
 
 # Append fstab
 cat >> "$CHROOT_SCRIPT" <<FSTAB_BLOCK
@@ -2583,10 +2632,22 @@ for ((attempt=1; attempt<=5; attempt++)); do
 done
 LOOP_DEV=""  # Clear so cleanup trap doesn't double-free
 
+# ==============================================================================
+# PHASE 3: VM CREATION AND IMPORT
+# ==============================================================================
+# In this phase we:
+# 1. Unmount and detach the loop device
+# 2. Create the VM shell with appropriate configuration
+# 3. Import the disk image into Proxmox storage
+# 4. Attach the disk to the VM
+# 5. Configure boot order and other VM settings
+# ==============================================================================
+
+verbose "Phase 3: VM creation and disk import"
+
 log "Creating VM $VMID..."
 log "VM name: $VM_NAME"
-
-# Create VM shell
+debug "VM configuration: memory=${MEMORY}MB, cores=$CORES, bridge=$BRIDGE, bios=$BIOS_TYPE"
 qm create "$VMID" \
     --name "$VM_NAME" \
     --memory "$MEMORY" \
