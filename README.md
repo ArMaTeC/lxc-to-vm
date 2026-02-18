@@ -1083,7 +1083,7 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 If you find this project helpful, consider buying me a coffee!
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-PayPal-blue?style=for-the-badge&logo=paypal)](https://www.paypal.com/paypalme/armatec0)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-PayPal-blue?style=for-the-badge&logo=paypal)](https://www.paypal.com/paypalme/CityLifeRPG)
 
 ---
 
