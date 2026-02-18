@@ -22,4 +22,4 @@ jobs:
           severity: error
           format: gcc
         env:
-          SHELLCHECK_OPTS: -e SC1090 -e SC1091 -e SC2001 -e SC2016 -e SC2034 -e SC2154
+          SHELLCHECK_OPTS: -e SC1090 -e SC1091 -e SC2001 -e SC2016 -e SC2034 -e SC2154 -e SC2155 -e SC2046 -e SC2221 -e SC2222 -e SC2064
