@@ -39,7 +39,7 @@
 # This catches bugs early and prevents partial/inconsistent state
 set -Eeuo pipefail
 
-readonly VERSION="6.0.1"
+readonly VERSION="6.0.3"
 readonly LOG_FILE="/var/log/shrink-lxc.log"
 readonly DEFAULT_HEADROOM_GB=1
 
@@ -54,7 +54,34 @@ readonly META_MARGIN_PCT=5                           # % of used space for files
 readonly META_MARGIN_MIN_MB=512                      # Minimum metadata margin (MB)
 readonly REQUIRED_CMDS=(e2fsck resize2fs)            # Essential tools for filesystem operations
 
-# Error codes for programmatic error handling
+# ==============================================================================
+# DEBUG MODE CONFIGURATION
+# ==============================================================================
+# Set SHRINK_LXC_DEBUG=1 environment variable to enable verbose debug output
+# This outputs detailed information about every operation for troubleshooting
+DEBUG=${SHRINK_LXC_DEBUG:-0}
+
+# Debug logging function - outputs detailed information when DEBUG=1
+# Arguments:
+#   $* - Debug message to display
+# Outputs: Debug text to stdout (only if DEBUG=1)
+debug() {
+    if [[ "$DEBUG" -eq 1 ]]; then
+        echo -e "${BLUE}[DEBUG]${NC} $*" >&2
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $*" >> "$LOG_FILE"
+}
+
+# Verbose logging function - always logs to file, optionally to console
+# Provides detailed step-by-step progress information
+# Arguments:
+#   $* - Verbose message to log
+verbose() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [VERBOSE] $*" >> "$LOG_FILE"
+    if [[ "$DEBUG" -eq 1 ]]; then
+        echo -e "${BLUE}[*]${NC} $*"
+    fi
+}
 # These allow external scripts to detect specific failure modes
 readonly E_INVALID_ARG=1       # Invalid command-line arguments
 readonly E_NOT_FOUND=2         # Container or resource not found
