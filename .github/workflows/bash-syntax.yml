@@ -1,0 +1,28 @@
+name: Bash Syntax Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  bash-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check bash syntax
+        run: |
+          find . -name "*.sh" -type f -exec bash -n {} \;
+
+      - name: Check script permissions
+        run: |
+          for script in lxc-to-vm.sh shrink-lxc.sh; do
+            if [[ -f "$script" ]]; then
+              if [[ ! -x "$script" ]]; then
+                echo "WARNING: $script is not executable"
+              fi
+            fi
+          done
