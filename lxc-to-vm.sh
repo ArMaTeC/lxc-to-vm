@@ -134,6 +134,22 @@ ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 # Exits: With E_INVALID_ARG (1)
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
 
+# Dump system information for debugging purposes
+# Outputs: System info to log file when DEBUG is enabled
+dump_system_info() {
+    [[ "${DEBUG:-0}" -eq 1 ]] || return 0
+    
+    log "System Information Dump:"
+    log "  Hostname: $(hostname)"
+    log "  Kernel: $(uname -r)"
+    log "  OS: $(cat /etc/os-release 2>/dev/null | grep -E '^PRETTY_NAME=' | cut -d= -f2 | tr -d '\"' || echo 'Unknown')"
+    log "  Proxmox Version: $(pveversion 2>/dev/null || echo 'Unknown')"
+    log "  Available Storage: $(pvesm status 2>/dev/null | awk 'NR>1{print $1}' | tr '\n' ', ' || echo 'N/A')"
+    log "  Free Disk Space: $(df -h /var/lib/vz 2>/dev/null | awk 'NR==2{print $4}' || df -h / 2>/dev/null | awk 'NR==2{print $4}' || echo 'Unknown')"
+    log "  Memory: $(free -h 2>/dev/null | awk '/^Mem:/{print $2}' || echo 'Unknown')"
+    log "  CPUs: $(nproc 2>/dev/null || echo 'Unknown')"
+}
+
 # Map failed command to likely root cause + actionable fix
 error_reason_and_fix() {
     local failed_cmd="$1"
