@@ -43,6 +43,9 @@
 # This outputs detailed information about every operation for troubleshooting
 DEBUG=${LXC_TO_VM_DEBUG:-0}
 
+# Log file location for all operations
+LOG_FILE="/var/log/lxc-to-vm.log"
+
 # Bash strict mode: exit on error, undefined variable, or pipe failure
 # -e: Exit immediately if a command exits with non-zero status
 # -E: Propagate ERR trap into functions/subshells
