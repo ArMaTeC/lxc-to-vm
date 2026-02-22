@@ -57,8 +57,6 @@ if [[ "${LXC_TO_VM_DEBUG:-0}" -eq 1 ]]; then
     debug "Debug mode enabled - verbose output active"
 fi
 
-# Dump system information at startup for debugging
-dump_system_info
 
 # ==============================================================================
 # CONSTANTS
@@ -149,6 +147,9 @@ dump_system_info() {
     log "  Memory: $(free -h 2>/dev/null | awk '/^Mem:/{print $2}' || echo 'Unknown')"
     log "  CPUs: $(nproc 2>/dev/null || echo 'Unknown')"
 }
+
+# Dump system information at startup for debugging
+dump_system_info
 
 # Map failed command to likely root cause + actionable fix
 error_reason_and_fix() {
