@@ -2,7 +2,7 @@
 # shellcheck shell=bash
 # ==============================================================================
 # Proxmox LXC to VM Converter
-# Version: 6.0.3
+# Version: 6.0.4
 # ==============================================================================
 #
 # DESCRIPTION:
@@ -53,7 +53,7 @@ LOG_FILE="/var/log/lxc-to-vm.log"
 # -o pipefail: Return value of pipeline is value of last command to fail
 set -Eeuo pipefail
 
-readonly VERSION="6.0.3"
+readonly VERSION="6.0.4"
 # Enable debug mode for troubleshooting
 # Usage: LXC_TO_VM_DEBUG=1 ./lxc-to-vm.sh -c 100 -v 200
 if [[ "${LXC_TO_VM_DEBUG:-0}" -eq 1 ]]; then

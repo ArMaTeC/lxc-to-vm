@@ -2,7 +2,7 @@
 # shellcheck shell=bash
 # ==============================================================================
 # Proxmox LXC Disk Shrinker
-# Version: 6.0.1
+# Version: 6.0.4
 # ==============================================================================
 #
 # DESCRIPTION:
@@ -39,7 +39,7 @@
 # This catches bugs early and prevents partial/inconsistent state
 set -Eeuo pipefail
 
-readonly VERSION="6.0.3"
+readonly VERSION="6.0.4"
 readonly LOG_FILE="/var/log/shrink-lxc.log"
 readonly DEFAULT_HEADROOM_GB=1
 
