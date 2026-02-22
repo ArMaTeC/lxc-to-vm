@@ -130,6 +130,14 @@ err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
 # Use to confirm operations completed successfully
 ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
+# Log debug message with gray/purple [D] prefix (only when DEBUG=1)
+# Arguments: $* - Message text
+# Side effects: Appends to $LOG_FILE only (no stdout) when debug enabled
+debug() {
+    [[ "${DEBUG:-0}" -eq 1 ]] || return 0
+    printf "${BLUE}[D]${NC} %s\n" "$*" >> "$LOG_FILE"
+}
+
 # Fatal error handler - prints error and exits
 # Arguments: $* - Error message
 # Exits: With E_INVALID_ARG (1)
