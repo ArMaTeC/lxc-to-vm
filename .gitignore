@@ -18,3 +18,4 @@ Thumbs.db
 .vscode/
 .idea/
 *.code-workspace
+test-remote-pve.ps1
