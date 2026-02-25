@@ -1,6 +1,6 @@
-<div align="center">
-
 # 🚀 Proxmox LXC to VM Converter
+
+<!-- markdownlint-disable MD013 -->
 
 [![Release](https://img.shields.io/github/v/release/ArMaTeC/lxc-to-vm?style=for-the-badge&color=blue)](https://github.com/ArMaTeC/lxc-to-vm/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
@@ -8,9 +8,7 @@
 
 **Convert Proxmox LXC containers into fully bootable QEMU/KVM virtual machines** ⚡
 
-[📖 Quick Start](#-quick-start) • [✨ Features](#-features) • [🛠️ Installation](#-installation) • [📚 Documentation](#-documentation)
-
-</div>
+[📖 Quick Start](#-quick-start) • [✨ Features](#-features) • [🛠️ Installation](#installation) • [📚 Documentation](#-documentation)
 
 ---
 
@@ -20,7 +18,7 @@
 - [🐧 Supported Distributions](#-supported-distributions)
 - [📦 Requirements](#-requirements)
 - [🚀 Quick Start](#-quick-start)
-- [🛠️ Installation](#-installation)
+- [🛠️ Installation](#installation)
 - [📖 Usage](#-usage)
 - [🔧 Advanced Features](#-advanced-features)
 - [🔄 Changelog](CHANGELOG.md)
@@ -34,7 +32,7 @@
 ### 🎯 Core Conversion (`lxc-to-vm.sh`)
 
 | Feature | Description |
-|---------|-------------|
+| ------- | ----------- |
 | ⚡ **One-Command Conversion** | Convert any LXC container to a bootable VM instantly |
 | 🐧 **Multi-Distro Support** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, Arch Linux (auto-detected) |
 | 🔒 **BIOS & UEFI Boot** | MBR/SeaBIOS (default) or GPT/OVMF with `--bios ovmf` |
@@ -57,7 +55,7 @@
 ### 💿 Disk Shrinker (`shrink-lxc.sh`)
 
 | Feature | Description |
-|---------|-------------|
+| ------- | ----------- |
 | 📉 **Smart Shrinking** | Shrinks to actual usage + configurable headroom |
 | 🔍 **Minimum Detection** | Queries `resize2fs -P` for true filesystem minimum |
 | 🔄 **Auto-Retry** | Increments by 2GB and retries up to 5 times |
@@ -69,7 +67,7 @@
 ## 🐧 Supported Distributions
 
 | Distro Family | Detected IDs | Package Manager |
-|---------------|--------------|-----------------|
+| ------------- | ------------ | --------------- |
 | **🟣 Debian/Ubuntu** | `debian`, `ubuntu`, `linuxmint`, `pop`, `kali` | `apt` |
 | **🔵 Alpine** | `alpine` | `apk` |
 | **🔴 RHEL/CentOS** | `centos`, `rhel`, `rocky`, `alma`, `fedora` | `yum`/`dnf` |
@@ -80,7 +78,7 @@
 ## 📦 Requirements
 
 | Requirement | Details |
-|-------------|---------|
+| ----------- | ------- |
 | 🖥️ **Proxmox VE** | Version 7.x, 8.x, or 9.x |
 | 📦 **Source LXC** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, or Arch based |
 | 🔑 **Root Access** | Must run as `root` on Proxmox host |
@@ -132,11 +130,11 @@ You'll be prompted for container ID, VM ID, storage, and disk size.
 
 ---
 
-## 🛠️ Installation
+## Installation
 
 No installation required! Just download and run. 🎉
 
-### One-Liner Install
+### One-Liner Install (Alternative)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh
@@ -262,7 +260,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --predict-size
 ### 📖 Command Reference
 
 | Short | Long | Description | Default |
-|-------|------|-------------|---------|
+| ----- | ---- | ----------- | ------- |
 | `-c` | `--ctid` | Source LXC container ID | *(prompted)* |
 | `-v` | `--vmid` | Target VM ID | *(prompted)* |
 | `-s` | `--storage` | Proxmox storage name | *(prompted)* |
@@ -278,6 +276,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --predict-size
 | | `--snapshot` | Create LXC snapshot before conversion | — |
 | | `--rollback-on-failure` | Auto-rollback on failure | — |
 | | `--destroy-source` | Destroy original LXC after success | — |
+| | `--replace-vm` | Replace existing VM (stop & destroy if exists) | — |
 | | `--resume` | Resume interrupted conversion | — |
 | | `--parallel <N>` | Run N conversions in parallel | `1` |
 | | `--validate-only` | Run pre-flight checks only | — |
@@ -291,7 +290,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --predict-size
 
 ### 🔄 How It Works
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │  1️⃣ ARGUMENT PARSING & VALIDATION               │
 │     Parse CLI flags or prompt interactively     │
@@ -329,7 +328,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --predict-size
 ### `lxc-to-vm.sh`
 
 | Code | Meaning |
-|------|---------|
+| ---- | ------- |
 | `0` | ✅ Success |
 | `1` | ❌ Invalid arguments |
 | `2` | ❌ Container/VM/storage not found |
@@ -341,7 +340,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --predict-size
 ### `shrink-lxc.sh`
 
 | Code | Meaning |
-|------|---------|
+| ---- | ------- |
 | `0` | ✅ Success |
 | `1` | ❌ Invalid arguments |
 | `2` | ❌ Container/resource not found |
@@ -361,13 +360,9 @@ If this project helps you, consider supporting development:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.
 
----
-
-<div align="center">
-
-</div>
+See the [LICENSE](LICENSE) file for details.
 
 ---
 
@@ -378,16 +373,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 This project includes two companion scripts:
 
 | Script | Purpose | Version |
-|--------|---------|---------|
-| **`lxc-to-vm.sh`** | Converts LXC containers to bootable VMs | 6.0.4 |
-| **`shrink-lxc.sh`** | Shrinks LXC disks before conversion | 6.0.4 |
+| ------ | ------- | ------- |
+| **`lxc-to-vm.sh`** | Converts LXC containers to bootable VMs | 6.0.5 |
+| **`shrink-lxc.sh`** | Shrinks LXC disks before conversion | 6.0.5 |
 
 ---
 
 ## 🐧 Supported Distributions (Detailed)
 
 | Distro Family | Detected IDs | Package Manager | Init System | Notes |
-|---------------|--------------|-----------------|-------------|-------|
+| ------------- | ------------ | --------------- | ----------- | ----- |
 | **🟣 Debian/Ubuntu** | `debian`, `ubuntu`, `linuxmint`, `pop`, `kali` | `apt` | systemd | Primary target, most tested |
 | **🔵 Alpine Linux** | `alpine` | `apk` | OpenRC | Auto-configured for containers |
 | **🔴 RHEL/CentOS/Rocky** | `centos`, `rhel`, `rocky`, `alma`, `fedora` | `yum`/`dnf` | systemd | Enterprise-grade support |
@@ -402,7 +397,7 @@ The distribution is auto-detected from `/etc/os-release` inside the container. T
 ### System Requirements
 
 | Requirement | Details | Mandatory |
-|-------------|---------|-----------|
+| ----------- | ------- | --------- |
 | **Proxmox VE** | Version 7.x, 8.x, or 9.x | ✅ Yes |
 | **Source LXC** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, or Arch based | ✅ Yes |
 | **Root Access** | Must run as `root` on Proxmox host | ✅ Yes |
@@ -459,6 +454,7 @@ sudo ./lxc-to-vm.sh
 ```
 
 You'll be prompted for:
+
 - Source Container ID (e.g., 100)
 - Target VM ID (e.g., 200)
 - Storage name (e.g., local-lvm)
@@ -501,6 +497,7 @@ sudo ./lxc-to-vm.sh -c <CTID> -v <VMID> -s <storage> -d <disk_size>
 ```
 
 Example:
+
 ```bash
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32
 ```
@@ -512,9 +509,10 @@ sudo ./lxc-to-vm.sh
 ```
 
 Sample output:
-```
+
+```text
 ==========================================
-   PROXMOX LXC TO VM CONVERTER v6.0.4
+   PROXMOX LXC TO VM CONVERTER v6.0.5
 ==========================================
 Enter Source Container ID (e.g., 100): 100
 Enter New VM ID (e.g., 200): 200
@@ -529,6 +527,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 ```
 
 Benefits:
+
 - Automatically shrinks 200GB → ~31GB
 - No need to specify disk size
 - Faster conversion
@@ -542,13 +541,14 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 -B ovmf --start
 
 Creates GPT partition with 512MB EFI System Partition.
 
-#### Dry-Run Preview
+#### Dry-Run Preview (lxc-to-vm.sh)
 
 ```bash
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 --dry-run
 ```
 
 Shows full summary without making changes:
+
 - Source/target config
 - LXC memory/cores
 - Disk space check
@@ -565,7 +565,8 @@ Preserves original network config, translating `eth0` → `ens18`.
 #### Batch Conversion
 
 Create `conversions.txt`:
-```
+
+```text
 # Format: <CTID> <VMID> [storage] [disk_size]
 100 200 local-lvm 32
 101 201 local-lvm 32
@@ -573,6 +574,7 @@ Create `conversions.txt`:
 ```
 
 Run batch:
+
 ```bash
 sudo ./lxc-to-vm.sh --batch conversions.txt
 ```
@@ -604,7 +606,7 @@ sudo ./shrink-lxc.sh -c 100 -g 2
 
 Adds 2GB headroom instead of 1GB.
 
-#### Dry-Run Preview
+#### Dry-Run Preview (shrink-lxc.sh)
 
 ```bash
 sudo ./shrink-lxc.sh -c 100 --dry-run
@@ -623,6 +625,7 @@ Shows shrink plan without executing.
 7. Updates container config with new size
 
 **Supported Backends:**
+
 - **LVM / LVM-thin**: `resize2fs` + `lvresize`
 - **Directory (raw)**: `resize2fs` via losetup + `truncate`
 - **Directory (qcow2)**: Convert → shrink → convert back
@@ -641,6 +644,7 @@ sudo ./lxc-to-vm.sh --wizard
 ```
 
 Guides through:
+
 1. Source container selection
 2. Target VM ID
 3. Storage selection
@@ -662,6 +666,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
 - Snapshot removed on successful completion
 
 Manual rollback if needed:
+
 ```bash
 pct rollback 100 pre-conversion-20250211-143022
 ```
@@ -699,6 +704,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 --resume
 ```
 
 Resume includes:
+
 - Partial rsync data
 - Conversion stage tracking
 - Timestamp of last attempt
@@ -713,6 +719,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
 **⚠️ Warning:** Only use after testing VM works. Combine with `--snapshot` for safety.
 
 Full safe migration:
+
 ```bash
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
   --snapshot --rollback-on-failure --shrink --start --destroy-source
@@ -727,6 +734,7 @@ sudo ./lxc-to-vm.sh -c 100 --validate-only
 ```
 
 Checks:
+
 - Container exists and is accessible
 - Container state (stopped/running)
 - Distro detection and compatibility
@@ -768,6 +776,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 ```
 
 **Sysprep cleans:**
+
 - SSH host keys
 - Machine ID
 - Persistent network rules
@@ -778,7 +787,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 
 ## 🔄 How It Works (Technical)
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │  1️⃣ ARGUMENT PARSING & VALIDATION               │
 │     Parse CLI flags or prompt interactively     │
@@ -824,7 +833,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 ### lxc-to-vm.sh Options
 
 | Short | Long | Description | Default |
-|-------|------|-------------|---------|
+| ----- | ---- | ----------- | ------- |
 | `-c` | `--ctid` | Source LXC container ID | Prompted |
 | `-v` | `--vmid` | Target VM ID | Prompted |
 | `-s` | `--storage` | Proxmox storage name | Prompted |
@@ -840,6 +849,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 | | `--snapshot` | Create LXC snapshot before conversion | — |
 | | `--rollback-on-failure` | Auto-rollback on failure | — |
 | | `--destroy-source` | Destroy original LXC after success | — |
+| | `--replace-vm` | Replace existing VM (stop & destroy if exists) | — |
 | | `--resume` | Resume interrupted conversion | — |
 | | `--parallel <N>` | Run N conversions in parallel | `1` |
 | | `--validate-only` | Run pre-flight checks only | — |
@@ -863,7 +873,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 ### shrink-lxc.sh Options
 
 | Short | Long | Description | Default |
-|-------|------|-------------|---------|
+| ----- | ---- | ----------- | ------- |
 | `-c` | `--ctid` | Container ID to shrink | Prompted |
 | `-g` | `--headroom` | Extra headroom in GB | `1` |
 | `-n` | `--dry-run` | Preview without making changes | — |
@@ -877,7 +887,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 ### lxc-to-vm.sh
 
 | Code | Name | Meaning |
-|------|------|---------|
+| ---- | ---- | ------- |
 | `0` | `E_SUCCESS` | ✅ Success |
 | `1` | `E_INVALID_ARG` | ❌ Invalid arguments |
 | `2` | `E_NOT_FOUND` | ❌ Container/VM/storage not found |
@@ -889,7 +899,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 ### shrink-lxc.sh
 
 | Code | Name | Meaning |
-|------|------|---------|
+| ---- | ---- | ------- |
 | `0` | `E_SUCCESS` | ✅ Success |
 | `1` | `E_INVALID_ARG` | ❌ Invalid arguments |
 | `2` | `E_NOT_FOUND` | ❌ Container/resource not found |
@@ -904,32 +914,38 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 After the script completes (if you didn't use `--start`):
 
 ### 1. Review VM Configuration
+
 ```bash
 qm config <VMID>
 ```
 
 ### 2. Start the VM
+
 ```bash
 qm start <VMID>
 ```
 
 ### 3. Access Console
+
 ```bash
 qm terminal <VMID> -iface serial0
 ```
 
 ### 4. Verify Networking
+
 Check `ip a` inside VM — interface should be `ens18` (or preserved config if `--keep-network`).
 
 ### 5. Install QEMU Guest Agent (if missing)
 
 **Debian/Ubuntu:**
+
 ```bash
 apt update && apt install qemu-guest-agent
 systemctl enable --now qemu-guest-agent
 ```
 
 **Alpine:**
+
 ```bash
 apk add qemu-guest-agent
 rc-update add qemu-guest-agent
@@ -937,18 +953,21 @@ rc-service qemu-guest-agent start
 ```
 
 **RHEL/CentOS/Rocky:**
+
 ```bash
 yum install qemu-guest-agent
 systemctl enable --now qemu-guest-agent
 ```
 
 **Arch Linux:**
+
 ```bash
 pacman -S qemu-guest-agent
 systemctl enable --now qemu-guest-agent
 ```
 
 ### 6. Remove Original LXC (after verifying VM works)
+
 ```bash
 pct destroy <CTID>
 ```
@@ -960,23 +979,29 @@ pct destroy <CTID>
 ### VM Doesn't Boot
 
 **Check boot order:**
+
 ```bash
 qm config <VMID> | grep boot
 ```
+
 Ensure `scsi0` is first.
 
 **Check disk attachment:**
+
 ```bash
 qm config <VMID> | grep scsi0
 ```
 
 **UEFI issues:**
+
 ```bash
 qm config <VMID> | grep efidisk
 ```
+
 For `--bios ovmf`, `efidisk0` must exist.
 
 **Check conversion log:**
+
 ```bash
 cat /var/log/lxc-to-vm.log
 ```
@@ -984,33 +1009,40 @@ cat /var/log/lxc-to-vm.log
 ### No Network in VM
 
 **Verify NIC configuration:**
+
 ```bash
 qm config <VMID> | grep net0
 ```
 
 **Check interface inside VM:**
+
 ```bash
 ip a
 ```
+
 Should show `ens18`.
 
 **Netplan systems:**
+
 ```bash
 ls /etc/netplan/
 netplan apply
 ```
 
 **Traditional interfaces:**
+
 ```bash
 cat /etc/network/interfaces
 ```
 
 ### Container Not Found
+
 ```bash
 pct list
 ```
 
 ### Storage Not Found
+
 ```bash
 pvesm status
 ```
@@ -1018,10 +1050,12 @@ pvesm status
 ### Disk Space Issues
 
 **LVM/ZFS vs Filesystem:**
+
 - LVM/ZFS pools ≠ filesystem space
 - Temp image needs *filesystem* space
 - Use `--shrink` to reduce required space
 - Use `--temp-dir` for alternative path:
+
   ```bash
   sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 200 -t /mnt/scratch
   ```
@@ -1029,16 +1063,19 @@ pvesm status
 ### Shrink Fails
 
 **Check shrink log:**
+
 ```bash
 cat /var/log/shrink-lxc.log
 ```
 
 **Manual retry with more headroom:**
+
 ```bash
 sudo ./shrink-lxc.sh -c 100 -g 5
 ```
 
 **Ensure container is stopped:**
+
 ```bash
 pct stop 100
 ```
@@ -1083,16 +1120,14 @@ Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guideli
 
 ---
 
-## 📄 License
+## 📄 License and Credits
 
-This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
+This project is licensed under the **MIT License**.
+
+See [LICENSE](LICENSE) for details.
 
 ---
-
-<div align="center">
 
 **[⬆ Back to Top](#-proxmox-lxc-to-vm-converter)**
 
 Made with ❤️ by [ArMaTeC](https://github.com/ArMaTeC)
-
-</div>

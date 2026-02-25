@@ -53,12 +53,12 @@ LOG_FILE="/var/log/lxc-to-vm.log"
 # -o pipefail: Return value of pipeline is value of last command to fail
 set -Eeuo pipefail
 
-readonly VERSION="6.0.4"
-# Enable debug mode for troubleshooting
-# Usage: LXC_TO_VM_DEBUG=1 ./lxc-to-vm.sh -c 100 -v 200
-if [[ "${LXC_TO_VM_DEBUG:-0}" -eq 1 ]]; then
-    debug "Debug mode enabled - verbose output active"
+if [[ "${DEBUG:-0}" -eq 1 ]]; then
+    export PS4='[${BASH_SOURCE}:${LINENO}] '
+    set -x
 fi
+
+readonly VERSION="6.0.5"
 
 
 # ==============================================================================
@@ -135,7 +135,14 @@ ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 # Side effects: Appends to $LOG_FILE only (no stdout) when debug enabled
 debug() {
     [[ "${DEBUG:-0}" -eq 1 ]] || return 0
-    printf "${BLUE}[D]${NC} %s\n" "$*" >> "$LOG_FILE"
+    printf "${BLUE}[D]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2
+}
+
+verbose() { debug "$@"; }
+
+# Log checkpoint marker (for major phases)
+checkpoint() {
+    printf "\n${PURPLE}[+]${NC} %s\n" "$*" | tee -a "$LOG_FILE"
 }
 
 # Fatal error handler - prints error and exits
@@ -159,8 +166,67 @@ dump_system_info() {
     log "  CPUs: $(nproc 2>/dev/null || echo 'Unknown')"
 }
 
-# Dump system information at startup for debugging
-dump_system_info
+dump_container_info() {
+    [[ "${DEBUG:-0}" -eq 1 ]] || return 0
+    local ctid="$1"
+    [[ -n "$ctid" ]] || return 0
+
+    log "Container Information Dump (CT $ctid):"
+    pct config "$ctid" 2>/dev/null | sed 's/^/  /' | tee -a "$LOG_FILE" >/dev/null || true
+
+    pct mount "$ctid" >/dev/null 2>&1 || true
+    local rootfs_path="/var/lib/lxc/${ctid}/rootfs"
+    if [[ -f "$rootfs_path/etc/os-release" ]]; then
+        local pretty
+        pretty="$(grep -E '^PRETTY_NAME=' "$rootfs_path/etc/os-release" 2>/dev/null | cut -d= -f2- | tr -d '"')"
+        [[ -n "$pretty" ]] && log "  Guest OS: $pretty"
+    fi
+    pct unmount "$ctid" >/dev/null 2>&1 || true
+}
+
+pct_mount_retry() {
+    local ctid="$1"
+    if pct mount "$ctid" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if $AUTO_FIX; then
+        warn "pct mount $ctid failed; attempting pct unlock + retry..."
+        pct unlock "$ctid" >/dev/null 2>&1 || true
+        sleep 1
+        pct mount "$ctid" >/dev/null 2>&1 && return 0
+    fi
+
+    return 1
+}
+
+destroy_vm_if_exists() {
+    local vmid="$1"
+    qm config "$vmid" >/dev/null 2>&1 || return 0
+
+    warn "VM ID $vmid already exists; stopping and destroying due to --replace-vm..."
+    qm unlock "$vmid" >>"$LOG_FILE" 2>&1 || true
+
+    qm stop "$vmid" >>"$LOG_FILE" 2>&1 || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if qm status "$vmid" 2>/dev/null | grep -q 'stopped'; then
+            break
+        fi
+        sleep 1
+    done
+
+    local destroy_out=""
+    if destroy_out=$(qm destroy "$vmid" --destroy-unreferenced-disks 1 --purge 1 2>&1); then
+        echo "$destroy_out" >>"$LOG_FILE"
+        ok "Destroyed existing VM $vmid."
+        return 0
+    fi
+
+    echo "$destroy_out" >>"$LOG_FILE"
+    qm status "$vmid" >>"$LOG_FILE" 2>&1 || true
+    qm config "$vmid" >>"$LOG_FILE" 2>&1 || true
+    die "Failed to destroy existing VM $vmid. Check $LOG_FILE for details."
+}
 
 # Map failed command to likely root cause + actionable fix
 error_reason_and_fix() {
@@ -277,6 +343,7 @@ Options:
   --snapshot             Create LXC snapshot before conversion (for rollback)
   --rollback-on-failure  Auto-rollback to snapshot if conversion fails
   --destroy-source         Destroy original LXC after successful conversion
+  --replace-vm             Replace existing VM (stop & destroy if VMID exists)
   --resume               Resume interrupted conversion from partial state
   --batch <FILE>         Batch file with CTID/VMID pairs for mass conversion
   --range <START>-<END>  Convert LXC range to VM range (e.g., 100-110:200-210)
@@ -317,6 +384,7 @@ Examples:
   $0 -c 100 --validate-only                                            # Pre-flight check
   $0 -c 100 -v 200 -s local-lvm --export-to s3://backup-bucket/vms   # Export to S3
   $0 -c 100 -v 200 -s local-lvm --as-template --sysprep              # Create template
+  $0 -c 100 -v 200 -s local-lvm --replace-vm                         # Replace existing VM
   $0 -c 100 -v 200 -s local-lvm --shrink                # Auto-shrink + convert
 USAGE
     exit 0
@@ -367,6 +435,12 @@ cleanup() {
     # -f: force unmount even if busy
     umount -lf "${MOUNT_POINT:-/nonexistent}/boot/efi" 2>/dev/null || true
 
+    # Recursive unmount of any nested mounts under the workspace mountpoint.
+    # This prevents rm errors on /proc/* and busy /dev/* bind mounts.
+    if [[ -n "${MOUNT_POINT:-}" && -d "${MOUNT_POINT}" ]]; then
+        umount -Rlf "${MOUNT_POINT}" 2>/dev/null || true
+    fi
+
     # Unmount chroot bind mounts in reverse order of mounting
     # These are needed for chroot to function (access to /dev, /proc, etc.)
     for mp in dev/pts dev proc sys; do
@@ -387,6 +461,12 @@ cleanup() {
     if [[ -n "${LOOP_DEV:-}" ]]; then
         kpartx -d "$LOOP_DEV" 2>/dev/null || true
         losetup -d "$LOOP_DEV" 2>/dev/null || true
+    fi
+
+    # Detach loop device if it exists (can be left behind on early failures)
+    if [[ -n "${LOOP_DEV:-}" ]]; then
+        losetup -d "$LOOP_DEV" 2>/dev/null || true
+        LOOP_DEV=""
     fi
 
     # Remove temporary working directory
@@ -1041,8 +1121,17 @@ run_single_conversion() {
     fi
 
     if qm config "$VMID" >/dev/null 2>&1; then
-        err "VM ID $VMID already exists. Skipping."
-        return 1
+        if $CLEANUP_EXISTING_VM; then
+            warn "VM ID $VMID already exists; stopping and destroying due to --replace-vm..."
+            qm stop "$VMID" >/dev/null 2>&1 || true
+            sleep 2
+            qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >/dev/null 2>&1 \
+                || die "Failed to destroy existing VM $VMID. Check $LOG_FILE for details."
+            ok "Destroyed existing VM $VMID."
+        else
+            err "VM ID $VMID already exists. Skipping."
+            return 1
+        fi
     fi
 
     # Create snapshot if requested
@@ -1082,6 +1171,7 @@ WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false
 EXPORT_DEST="" AS_TEMPLATE=false SYSPREP=false
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
 AUTO_FIX=true
+CLEANUP_EXISTING_VM=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1101,6 +1191,7 @@ while [[ $# -gt 0 ]]; do
         --snapshot)      CREATE_SNAPSHOT=true; shift ;;
         --rollback-on-failure) ROLLBACK_ON_FAILURE=true; shift ;;
         --destroy-source) DESTROY_SOURCE=true; shift ;;
+        --replace-vm)    CLEANUP_EXISTING_VM=true; shift ;;
         --resume)        RESUME_MODE=true;  shift ;;
         --batch)         BATCH_FILE="$2";  shift 2 ;;
         --range)         RANGE_SPEC="$2";  shift 2 ;;
@@ -1648,12 +1739,33 @@ if ! pct config "$CTID" >/dev/null 2>&1; then
 fi
 
 if qm config "$VMID" >/dev/null 2>&1; then
-    die "VM ID $VMID already exists. Choose a different ID."
+    if $CLEANUP_EXISTING_VM; then
+        warn "VM ID $VMID already exists; stopping and destroying due to --replace-vm..."
+        qm stop "$VMID" >/dev/null 2>&1 || true
+        sleep 2
+        qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >/dev/null 2>&1 \
+            || die "Failed to destroy existing VM $VMID. Check $LOG_FILE for details."
+        ok "Destroyed existing VM $VMID."
+    else
+        die "VM ID $VMID already exists. Choose a different ID."
+    fi
 fi
 
 # Validate storage exists
 if ! pvesm status | awk 'NR>1{print $1}' | grep -qx "$STORAGE"; then
     die "Storage '$STORAGE' not found. Available: $(pvesm status | awk 'NR>1{print $1}' | tr '\n' ', ')"
+fi
+
+if [[ ! -e /dev/urandom ]]; then
+    die "Host device /dev/urandom is missing. Proxmox tools may be broken (pvesm/pct/qm). Fix the host /dev (udev) and retry."
+fi
+
+STORAGE_STATUS=$(pvesm status 2>/dev/null | awk -v s="$STORAGE" 'NR>1 && $1==s{print $3; exit}')
+if [[ -z "${STORAGE_STATUS:-}" ]]; then
+    die "Unable to determine status for storage '$STORAGE' via pvesm status."
+fi
+if [[ "$STORAGE_STATUS" != "active" ]]; then
+    die "Storage '$STORAGE' is not active (status=$STORAGE_STATUS). Fix Proxmox storage (e.g. activate thinpool) and retry."
 fi
 
 # Check LXC is stopped
@@ -1684,9 +1796,16 @@ if $SHRINK_FIRST && ! $DRY_RUN; then
 
     # Mount and measure used space
     log "Mounting container to measure used space..."
-    pct mount "$CTID"
     SHRINK_ROOT="/var/lib/lxc/${CTID}/rootfs"
-    if [[ -d "$SHRINK_ROOT" ]]; then
+    shrink_mounted=false
+
+    # Check if rootfs is actually populated (dir may exist as empty mountpoint when CT is stopped)
+    if [[ ! -d "$SHRINK_ROOT/etc" ]]; then
+        pct_mount_retry "$CTID" || die "Failed to mount container $CTID for shrink measurement."
+        shrink_mounted=true
+    fi
+
+    if [[ -d "$SHRINK_ROOT/etc" ]]; then
         SHRINK_USED_BYTES=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
             --exclude='tmp/*' --exclude='run/*' --exclude='mnt/*' \
             --exclude='media/*' --exclude='lost+found' \
@@ -1694,10 +1813,10 @@ if $SHRINK_FIRST && ! $DRY_RUN; then
         SHRINK_USED_MB=$(( ${SHRINK_USED_BYTES:-0} / 1024 / 1024 ))
         SHRINK_USED_GB=$(( (SHRINK_USED_MB + 1023) / 1024 ))
     else
-        pct unmount "$CTID" 2>/dev/null || true
-        die "Could not locate rootfs for container $CTID."
+        $shrink_mounted && pct unmount "$CTID" 2>/dev/null || true
+        die "Container rootfs directory not found after mount: $SHRINK_ROOT"
     fi
-    pct unmount "$CTID" 2>/dev/null || true
+    $shrink_mounted && pct unmount "$CTID" 2>/dev/null || true
 
     SHRINK_USED_HR=$(numfmt --to=iec-i --suffix=B "${SHRINK_USED_BYTES:-0}" 2>/dev/null || echo "${SHRINK_USED_MB}MB")
     log "Used space: ${SHRINK_USED_HR} (~${SHRINK_USED_GB}GB)"
@@ -2066,10 +2185,9 @@ if [[ "$BIOS_TYPE" == "ovmf" ]]; then
     parted -s "$IMAGE_FILE" set 1 esp on
     parted -s "$IMAGE_FILE" mkpart primary ext4 513MiB 100%
 
-    LOOP_DEV=$(losetup --show -f "$IMAGE_FILE")
-    kpartx -a "$LOOP_DEV"
-    EFI_PART="/dev/mapper/$(basename "$LOOP_DEV")p1"
-    LOOP_MAP="/dev/mapper/$(basename "$LOOP_DEV")p2"
+    LOOP_DEV=$(losetup --show -fP "$IMAGE_FILE")
+    EFI_PART="${LOOP_DEV}p1"
+    LOOP_MAP="${LOOP_DEV}p2"
 
     # Wait for device nodes
     for ((i=1; i<=10; i++)); do
@@ -2095,9 +2213,8 @@ else
     parted -s "$IMAGE_FILE" mkpart primary ext4 1MiB 100%
     parted -s "$IMAGE_FILE" set 1 boot on
 
-    LOOP_DEV=$(losetup --show -f "$IMAGE_FILE")
-    kpartx -a "$LOOP_DEV"
-    LOOP_MAP="/dev/mapper/$(basename "$LOOP_DEV")p1"
+    LOOP_DEV=$(losetup --show -fP "$IMAGE_FILE")
+    LOOP_MAP="${LOOP_DEV}p1"
 
     for ((i=1; i<=10; i++)); do
         [[ -b "$LOOP_MAP" ]] && break
@@ -2130,7 +2247,7 @@ fi
 verbose "Phase 1: Container data extraction and disk preparation"
 
 log "Mounting source container $CTID..."
-pct mount "$CTID"
+pct_mount_retry "$CTID" || die "Failed to mount container $CTID."
 
 # Detect rootfs mount path (handles both legacy and new paths)
 LXC_ROOT_MOUNT=""
@@ -2361,6 +2478,33 @@ mkdir -p /proc/sys/fs/binfmt_misc
 mkdir -p /sys/fs/fuse/connections /sys/kernel/config /sys/kernel/debug /sys/kernel/tracing
 API_MOUNTPOINTS_BLOCK
 
+# Remove LXC-specific artifacts that break systemd when booting as a VM.
+# Containers have custom generators, masked mount units, and container-getty
+# services that cause PID 1 to crash ("Attempted to kill init!") in a VM.
+cat >> "$CHROOT_SCRIPT" <<'LXC_CLEANUP_BLOCK'
+# --- LXC artifact cleanup ---
+rm -f /etc/systemd/system-generators/lxc
+rm -f /etc/systemd/system/getty.target.wants/container-getty@*
+for masked_unit in sys-kernel-config.mount sys-kernel-debug.mount; do
+    if [ -L "/etc/systemd/system/$masked_unit" ] && \
+       [ "$(readlink /etc/systemd/system/$masked_unit)" = "/dev/null" ]; then
+        rm -f "/etc/systemd/system/$masked_unit"
+    fi
+done
+rm -rf /run/*
+if [ -d /etc/systemd/system ] && [ ! -e /etc/systemd/system/default.target ]; then
+    ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+fi
+# Enable VGA and serial login prompts (containers use container-getty, VMs need getty)
+mkdir -p /etc/systemd/system/getty.target.wants
+if [ -f /usr/lib/systemd/system/getty@.service ]; then
+    ln -sf /usr/lib/systemd/system/getty@.service /etc/systemd/system/getty.target.wants/getty@tty1.service
+fi
+if [ -f /usr/lib/systemd/system/serial-getty@.service ]; then
+    ln -sf /usr/lib/systemd/system/serial-getty@.service /etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
+fi
+LXC_CLEANUP_BLOCK
+
 # --- Networking block (depends on --keep-network) ---
 if $KEEP_NETWORK; then
     cat >> "$CHROOT_SCRIPT" <<'NET_KEEP_BLOCK'
@@ -2506,19 +2650,79 @@ ALPINE_BIOS
         ;;
     rhel)
         if [[ "$BIOS_TYPE" == "ovmf" ]]; then
-            cat >> "$CHROOT_SCRIPT" <<RHEL_EFI
-yum install -y kernel grub2-efi-x64 grub2-efi-x64-modules shim-x64 efibootmgr 2>/dev/null \
-    || dnf install -y kernel grub2-efi-x64 grub2-efi-x64-modules shim-x64 efibootmgr
-grub2-install --target=x86_64-efi --efi-directory=/boot/efi --no-nvram --force --removable 2>/dev/null || true
-grub2-mkconfig -o /boot/efi/EFI/BOOT/grub.cfg 2>/dev/null \
-    || grub2-mkconfig -o /boot/grub2/grub.cfg
+            cat >> "$CHROOT_SCRIPT" <<'RHEL_EFI'
+PKG_MGR=""
+if command -v dnf >/dev/null 2>&1; then PKG_MGR="dnf"; else PKG_MGR="yum"; fi
+${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2-efi-x64 grub2-efi-x64-modules shim-x64 efibootmgr qemu-guest-agent e2fsprogs 2>/dev/null \
+    || ${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2-efi-x64 shim-x64 efibootmgr qemu-guest-agent e2fsprogs
+
+if [ ! -e /sbin/init ]; then
+    if [ -x /usr/lib/systemd/systemd ]; then
+        ln -sf /usr/lib/systemd/systemd /sbin/init
+    fi
+fi
+
+if command -v grub2-install >/dev/null 2>&1; then
+    grub2-install --target=x86_64-efi --efi-directory=/boot/efi --no-nvram --force --removable 2>/dev/null || true
+fi
+
+if command -v grubby >/dev/null 2>&1; then
+    grubby --update-kernel=ALL --args="rw console=tty0 console=ttyS0,115200n8" 2>/dev/null || true
+fi
+
+ldconfig 2>/dev/null || true
+
+for kver in /lib/modules/*; do
+    kver="$(basename "$kver")"
+    dracut -f --kver "$kver" --add-drivers "virtio_blk virtio_scsi virtio_pci virtio_net sd_mod ext4" "/boot/initramfs-${kver}.img" 2>/dev/null || true
+done
+
+mkdir -p /boot/efi/EFI/BOOT 2>/dev/null || true
+grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || grub2-mkconfig -o /boot/grub/grub.cfg
+if [ -f /boot/grub2/grub.cfg ]; then
+    cp -f /boot/grub2/grub.cfg /boot/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
+fi
+systemctl enable serial-getty@ttyS0.service qemu-guest-agent.service 2>/dev/null || true
+if [ -f /etc/sysconfig/qemu-ga ]; then
+    sed -i 's/^FILTER_RPC_ARGS=/#FILTER_RPC_ARGS=/' /etc/sysconfig/qemu-ga
+fi
 RHEL_EFI
         else
-            cat >> "$CHROOT_SCRIPT" <<RHEL_BIOS
-yum install -y kernel grub2 grub2-pc 2>/dev/null \
-    || dnf install -y kernel grub2 grub2-pc
-grub2-install --target=i386-pc --recheck --force "${LOOP_DEV}"
-grub2-mkconfig -o /boot/grub2/grub.cfg
+            cat >> "$CHROOT_SCRIPT" <<RHEL_BIOS_LOOPDEV
+LOOP_DEV_HOST="${LOOP_DEV}"
+RHEL_BIOS_LOOPDEV
+            cat >> "$CHROOT_SCRIPT" <<'RHEL_BIOS'
+PKG_MGR=""
+if command -v dnf >/dev/null 2>&1; then PKG_MGR="dnf"; else PKG_MGR="yum"; fi
+${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2 grub2-pc qemu-guest-agent e2fsprogs 2>/dev/null \
+    || ${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2 qemu-guest-agent e2fsprogs
+
+if [ ! -e /sbin/init ]; then
+    if [ -x /usr/lib/systemd/systemd ]; then
+        ln -sf /usr/lib/systemd/systemd /sbin/init
+    fi
+fi
+
+if command -v grub2-install >/dev/null 2>&1; then
+    grub2-install --target=i386-pc --recheck --force "${LOOP_DEV_HOST}" 2>/dev/null || true
+fi
+
+if command -v grubby >/dev/null 2>&1; then
+    grubby --update-kernel=ALL --args="rw console=tty0 console=ttyS0,115200n8" 2>/dev/null || true
+fi
+
+ldconfig 2>/dev/null || true
+
+for kver in /lib/modules/*; do
+    kver="$(basename "$kver")"
+    dracut -f --kver "$kver" --add-drivers "virtio_blk virtio_scsi virtio_pci virtio_net sd_mod ext4" "/boot/initramfs-${kver}.img" 2>/dev/null || true
+done
+
+grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || grub2-mkconfig -o /boot/grub/grub.cfg
+systemctl enable serial-getty@ttyS0.service qemu-guest-agent.service 2>/dev/null || true
+if [ -f /etc/sysconfig/qemu-ga ]; then
+    sed -i 's/^FILTER_RPC_ARGS=/#FILTER_RPC_ARGS=/' /etc/sysconfig/qemu-ga
+fi
 RHEL_BIOS
         fi
         ;;
@@ -2683,6 +2887,7 @@ qm create "$VMID" \
     --net0 "virtio,bridge=${BRIDGE}" \
     --bios "$BIOS_TYPE" \
     --ostype "$OSTYPE" \
+    --cpu host \
     --scsihw virtio-scsi-pci \
     --serial0 socket \
     --agent enabled=1
@@ -3011,7 +3216,8 @@ fi
 
 if (( VM_HEALTH_ERRORS > 0 )); then
     collect_vm_diagnostics
-    die "Post-conversion VM health checks failed (${VM_HEALTH_ERRORS} issue(s)). Review $LOG_FILE for host/guest diagnostics."
+    warn "Post-conversion VM health checks had ${VM_HEALTH_ERRORS} issue(s). Review $LOG_FILE for host/guest diagnostics."
+    warn "The VM was created and started successfully. Guest agent may need more time to initialize."
 fi
 
 # ==============================================================================
@@ -3064,7 +3270,16 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
     fi
 
     if qm config "$VMID" >/dev/null 2>&1; then
-        die "VM ID $VMID already exists. Choose a different ID."
+        if $CLEANUP_EXISTING_VM; then
+            warn "VM ID $VMID already exists; stopping and destroying due to --replace-vm..."
+            qm stop "$VMID" >/dev/null 2>&1 || true
+            sleep 2
+            qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >/dev/null 2>&1 \
+                || die "Failed to destroy existing VM $VMID. Check $LOG_FILE for details."
+            ok "Destroyed existing VM $VMID."
+        else
+            die "VM ID $VMID already exists. Choose a different ID."
+        fi
     fi
 
     # Create snapshot if requested

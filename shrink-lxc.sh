@@ -39,7 +39,7 @@
 # This catches bugs early and prevents partial/inconsistent state
 set -Eeuo pipefail
 
-readonly VERSION="6.0.4"
+readonly VERSION="6.0.5"
 readonly LOG_FILE="/var/log/shrink-lxc.log"
 readonly DEFAULT_HEADROOM_GB=1
 
@@ -60,6 +60,11 @@ readonly REQUIRED_CMDS=(e2fsck resize2fs)            # Essential tools for files
 # Set SHRINK_LXC_DEBUG=1 environment variable to enable verbose debug output
 # This outputs detailed information about every operation for troubleshooting
 DEBUG=${SHRINK_LXC_DEBUG:-0}
+
+if [[ "${DEBUG:-0}" -eq 1 ]]; then
+    export PS4='[${BASH_SOURCE}:${LINENO}] '
+    set -x
+fi
 
 # Debug logging function - outputs detailed information when DEBUG=1
 # Arguments:

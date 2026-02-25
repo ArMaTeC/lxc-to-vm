@@ -5,13 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.5] - 2025-02-25
+
+### Fixed (CentOS/RHEL Support)
+
+- **CPU type fix**: Added `--cpu host` to `qm create` for x86-64-v2 compatibility (CentOS 9 glibc requires x86-64-v2, not supported by default kvm64)
+- **Initramfs drivers**: Added `sd_mod` and `ext4` to dracut `--add-drivers` so root block device is created properly
+- **LXC artifact cleanup**: Remove LXC-specific systemd generators, container-getty services, and masked mount units that break VM boot
+- **Library cache**: Run `ldconfig` before `dracut` so `libsystemd-core` is found and included in initramfs
+- **Login prompt**: Enable `getty@tty1` and `serial-getty@ttyS0` services (containers use container-getty which doesn't work in VMs)
+- **Guest agent**: Comment out restrictive `FILTER_RPC_ARGS` allow-list in CentOS qemu-ga config so `guest-exec` works
+
+### Fixed (General)
+
+- PowerShell 5.1 compatibility: Use `$psi.Arguments` string instead of `.ArgumentList` collection in `Invoke-ExternalCommandWithTimeout`
+- CRLF stripping after SCP to remote host for bash script compatibility
+
 ## [6.0.4] - 2025-02-22
 
 ### Added
+
 - Added missing `dump_system_info` function for debug output
 - Added PayPal donation link for project support
 
 ### Fixed
+
 - Fixed ShellCheck warnings with proper exclusions (SC2155, SC2046, SC2221, SC2222, SC2064)
 - Fixed missing `LOG_FILE` variable definition
 - Fixed missing `debug` function implementation
@@ -20,12 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [6.0.3] - 2025-10-22
 
-### Added
+Added
+
 - Enhanced debug output with detailed phase comments
 - GitHub workflows for release, shellcheck, and bash-syntax checks
 - Buy Me A Coffee support section
 
-### Fixed
+Fixed
+
 - FEATURE_C12 ext4 boot error fixes
 - ext4 metadata_csum disabling at mkfs.ext4 creation time
 - Filesystem writability test before import
@@ -34,26 +54,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [6.0.2] - 2025-10-16
 
-### Fixed
+Fixed
+
 - Fixed FEATURE_C12 boot error on older kernels
 - Fixed cleanup trap for better resource management
 - Metadata_csum feature disabled to prevent busybox initramfs boot failures
 
 ## [6.0.1] - 2025-02-12
 
-### Added
+Added
+
 - API/cluster integration for remote Proxmox operations
 - Plugin/hook system for extensibility
 - Predictive disk size advisor based on historical growth patterns
 - Code standardization across all scripts
 
-### Enhanced
+Enhanced
+
 - Batch conversion documentation with detailed examples
 - Function extraction and code organization improvements
 
 ## [6.0.0] - 2025-02-11
 
-### Added (Enterprise Edition)
+Added (Enterprise Edition)
+
 - 🧙 Wizard mode - Interactive TUI with progress bars
 - ⚡ Parallel batch processing - Run N conversions concurrently
 - ✅ Pre-flight validation - Check container readiness without converting
@@ -64,32 +88,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 💾 Snapshot & rollback - Automatic rollback on failure
 - 📊 Configuration profiles - Save and reuse common settings
 
-### Enhanced
+Enhanced
+
 - Disk space management with auto-selection of mount points
 - Post-conversion validation with 6-point check
 - GitHub workflows for automated testing
 
 ## [5.1.0] - 2025-02-10
 
-### Added
+Added
+
 - Auto-retry logic for resize2fs failures (up to 5 attempts)
 - 3GB overhead to auto-calculated disk size
 - Enhanced workspace logging improvements
 
-### Fixed
+Fixed
+
 - Disk space check function organization
 - Better error handling during shrink operations
 
 ## [5.0.0] - 2025-02-10
 
-### Added
+Added
+
 - `--shrink` flag for automatic disk shrinking before conversion
 - Intelligent sizing with metadata margin calculation
 - Integrated shrink + convert workflow
 
 ## [4.0.0] - 2025-02-10
 
-### Added
+Added
+
 - Multi-distro support (Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, Arch)
 - UEFI/OVMF boot support with `--bios ovmf`
 - Dry-run mode for previewing conversions
@@ -99,7 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2025-02-10
 
-### Added
+Added
+
 - Initial release of lxc-to-vm.sh
 - Basic LXC to VM conversion functionality
 - Debian/Ubuntu primary support
