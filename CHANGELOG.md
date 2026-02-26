@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.6] - 2025-02-26
+
+### Fixed (CentOS 7 Support)
+
+- **CentOS 7 EOL repos**: Auto-fix CentOS 7 repos to use vault.centos.org after EOL (June 2024)
+- **CentOS 7 GRUB**: Fix linuxefi/initrdefi commands in grub.cfg for BIOS boot
+- **pcspkr blacklist**: Add module_blacklist=pcspkr kernel parameter to suppress PC speaker driver errors during boot
+
 ## [6.0.5] - 2025-02-25
 
 ### Fixed (CentOS/RHEL Support)

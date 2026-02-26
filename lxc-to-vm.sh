@@ -58,7 +58,7 @@ if [[ "${DEBUG:-0}" -eq 1 ]]; then
     set -x
 fi
 
-readonly VERSION="6.0.5"
+readonly VERSION="6.0.6"
 
 
 # ==============================================================================
@@ -2415,6 +2415,20 @@ elif [[ -f "$MOUNT_POINT/etc/redhat-release" ]]; then
 fi
 log "Detected distro family: $DISTRO_FAMILY (ID: ${DISTRO_ID:-unknown})"
 
+# --- CentOS 7 EOL repo fix ---
+# CentOS 7 reached EOL June 2024 and repos moved to vault.centos.org
+if [[ "$DISTRO_ID" == "centos" ]] && [[ -f "$MOUNT_POINT/etc/centos-release" ]]; then
+    CENTOS_VERSION=$(awk '{print $4}' "$MOUNT_POINT/etc/centos-release" | cut -d. -f1)
+    if [[ "$CENTOS_VERSION" == "7" ]]; then
+        log "Detected CentOS 7 (EOL) - fixing repos to use vault.centos.org..."
+        for repo_file in "$MOUNT_POINT"/etc/yum.repos.d/CentOS-*.repo; do
+            if [[ -f "$repo_file" ]]; then
+                sed -i 's|^mirrorlist=|#mirrorlist=|g; s|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' "$repo_file" 2>/dev/null || true
+            fi
+        done
+    fi
+fi
+
 # --- Build the chroot script dynamically ---
 CHROOT_SCRIPT="$TEMP_DIR/chroot-setup.sh"
 debug "Creating chroot script at: $CHROOT_SCRIPT"
@@ -2502,6 +2516,19 @@ if [ -f /usr/lib/systemd/system/getty@.service ]; then
 fi
 if [ -f /usr/lib/systemd/system/serial-getty@.service ]; then
     ln -sf /usr/lib/systemd/system/serial-getty@.service /etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
+fi
+# Blacklist noisy modules that cause harmless but scary boot messages
+if [ -d /etc/modprobe.d ]; then
+    echo "blacklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
+fi
+# Also add to GRUB cmdline to prevent loading during early boot
+if [ -f /etc/default/grub ]; then
+    if grep -q "GRUB_CMDLINE_LINUX=" /etc/default/grub; then
+        # Append to existing line
+        sed -i 's/GRUB_CMDLINE_LINUX="\([^"]*\)"/GRUB_CMDLINE_LINUX="\1 module_blacklist=pcspkr"/' /etc/default/grub
+    else
+        echo 'GRUB_CMDLINE_LINUX="module_blacklist=pcspkr"' >> /etc/default/grub
+    fi
 fi
 LXC_CLEANUP_BLOCK
 
@@ -2667,7 +2694,7 @@ if command -v grub2-install >/dev/null 2>&1; then
 fi
 
 if command -v grubby >/dev/null 2>&1; then
-    grubby --update-kernel=ALL --args="rw console=tty0 console=ttyS0,115200n8" 2>/dev/null || true
+    grubby --update-kernel=ALL --args="rw console=tty0 console=ttyS0,115200n8 module_blacklist=pcspkr" 2>/dev/null || true
 fi
 
 ldconfig 2>/dev/null || true
@@ -2708,7 +2735,7 @@ if command -v grub2-install >/dev/null 2>&1; then
 fi
 
 if command -v grubby >/dev/null 2>&1; then
-    grubby --update-kernel=ALL --args="rw console=tty0 console=ttyS0,115200n8" 2>/dev/null || true
+    grubby --update-kernel=ALL --args="rw console=tty0 console=ttyS0,115200n8 module_blacklist=pcspkr" 2>/dev/null || true
 fi
 
 ldconfig 2>/dev/null || true
@@ -2719,6 +2746,12 @@ for kver in /lib/modules/*; do
 done
 
 grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || grub2-mkconfig -o /boot/grub/grub.cfg
+# Fix CentOS 7 grub.cfg on BIOS - replace linuxefi with linux
+for grub_cfg in /boot/grub2/grub.cfg /boot/grub/grub.cfg; do
+    if [ -f "$grub_cfg" ] && grep -q "linuxefi\|initrdefi" "$grub_cfg" 2>/dev/null; then
+        sed -i 's/linuxefi/linux/g; s/initrdefi/initrd/g' "$grub_cfg"
+    fi
+done
 systemctl enable serial-getty@ttyS0.service qemu-guest-agent.service 2>/dev/null || true
 if [ -f /etc/sysconfig/qemu-ga ]; then
     sed -i 's/^FILTER_RPC_ARGS=/#FILTER_RPC_ARGS=/' /etc/sysconfig/qemu-ga

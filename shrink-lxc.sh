@@ -39,7 +39,7 @@
 # This catches bugs early and prevents partial/inconsistent state
 set -Eeuo pipefail
 
-readonly VERSION="6.0.5"
+readonly VERSION="6.0.6"
 readonly LOG_FILE="/var/log/shrink-lxc.log"
 readonly DEFAULT_HEADROOM_GB=1
 

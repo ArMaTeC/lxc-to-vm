@@ -30,9 +30,11 @@ git checkout -b feature/my-change
 - **Shell:** Bash 4.x+ (`#!/usr/bin/env bash`)
 - **Style:** Follow existing conventions in the script
 - **Linting:** All changes must pass ShellCheck with zero warnings:
+
   ```bash
   shellcheck --severity=warning --shell=bash lxc-to-vm.sh
   ```
+
 - **Quoting:** Always double-quote variable expansions (`"$VAR"`, not `$VAR`)
 - **Error handling:** Use `set -euo pipefail`; use the `die()` function for fatal errors
 
@@ -47,7 +49,7 @@ git checkout -b feature/my-change
 
 Use clear, imperative-mood messages:
 
-```
+```bash
 Add --format flag for disk image format selection
 Fix cleanup trap not detaching loop device on error
 ```

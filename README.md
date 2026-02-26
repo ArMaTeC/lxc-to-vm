@@ -374,8 +374,8 @@ This project includes two companion scripts:
 
 | Script | Purpose | Version |
 | ------ | ------- | ------- |
-| **`lxc-to-vm.sh`** | Converts LXC containers to bootable VMs | 6.0.5 |
-| **`shrink-lxc.sh`** | Shrinks LXC disks before conversion | 6.0.5 |
+| **`lxc-to-vm.sh`** | Converts LXC containers to bootable VMs | 6.0.6 |
+| **`shrink-lxc.sh`** | Shrinks LXC disks before conversion | 6.0.6 |
 
 ---
 
@@ -512,7 +512,7 @@ Sample output:
 
 ```text
 ==========================================
-   PROXMOX LXC TO VM CONVERTER v6.0.5
+   PROXMOX LXC TO VM CONVERTER v6.0.6
 ==========================================
 Enter Source Container ID (e.g., 100): 100
 Enter New VM ID (e.g., 200): 200
