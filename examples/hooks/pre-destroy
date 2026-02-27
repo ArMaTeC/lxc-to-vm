@@ -1,0 +1,43 @@
+#!/bin/bash
+# ==============================================================================
+# Hook: pre-destroy
+# Description: Runs before destroying the source container - useful for final
+#              backups, verification, or logging
+# ==============================================================================
+
+CTID="$1"
+VMID="$2"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pre-destroy hook: Final checks before destroying CT $CTID" | tee -a "$HOOK_LOG_FILE"
+
+# Example 1: Final verification that VM is healthy before destroying source
+# AGENT_HEALTH=$(qm agent "$VMID" ping 2>/dev/null && echo "OK" || echo "FAIL")
+# if [[ "$AGENT_HEALTH" != "OK" ]]; then
+#     echo "ERROR: VM guest agent not responding. Aborting container destruction!"
+#     echo "Run with --destroy-source to retry after verifying VM health"
+#     exit 1  # Non-zero exit prevents destruction
+# fi
+
+# Example 2: Create final backup before destruction
+# BACKUP_DIR="/backup/final/$(date +%Y%m%d)"
+# mkdir -p "$BACKUP_DIR"
+# echo "Creating final backup of CT $CTID before destruction..."
+# vzdump "$CTID" --dumpdir "$BACKUP_DIR" --compress zstd --mode stop
+
+# Example 3: Log final container state for audit trail
+{
+    echo "=== Container $CTID final state before destruction ==="
+    echo "Timestamp: $(date -Iseconds)"
+    echo "Converted to VM: $VMID"
+    pct config "$CTID" 2>/dev/null || true
+} >> "/var/log/lxc-to-vm-audit.log"
+
+# Example 4: Archive container configuration
+# pct config "$CTID" > "/etc/pve/archive/ct-${CTID}-$(date +%Y%m%d).conf" 2>/dev/null || true
+
+# Example 5: Notify that source will be destroyed
+# curl -s -X POST "https://ntfy.sh/ops-alerts" \
+#     -d "Source CT $CTID will be destroyed. VM $VMID is ready."
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pre-destroy hook completed" | tee -a "$HOOK_LOG_FILE"
+exit 0

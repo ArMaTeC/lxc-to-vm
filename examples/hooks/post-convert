@@ -1,0 +1,52 @@
+#!/bin/bash
+# ==============================================================================
+# Hook: post-convert
+# Description: Runs after successful VM creation - useful for configuration,
+#              registration, monitoring setup, or cleanup
+# ==============================================================================
+
+CTID="$1"
+VMID="$2"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Post-convert hook: Finalizing VM $VMID" | tee -a "$HOOK_LOG_FILE"
+
+# Example 1: Start the VM if not auto-started
+# VM_STATUS=$(qm status "$VMID" 2>/dev/null | awk '{print $2}')
+# if [[ "$VM_STATUS" == "stopped" ]]; then
+#     echo "Starting VM $VMID..."
+#     qm start "$VMID"
+# fi
+
+# Example 2: Register VM in external inventory/database
+# curl -s -X POST "http://inventory.internal/api/vms" \
+#     -H "Content-Type: application/json" \
+#     -d "{\"vmid\": $VMID, \"source_ct\": $CTID, \"created\": \"$(date -Iseconds)\"}"
+
+# Example 3: Apply custom VM settings (CPU pinning, memory ballooning)
+# qm set "$VMID" --cpuunits 1000 --memory 4096 --balloon 2048
+
+# Example 4: Add VM to monitoring
+# Add Prometheus exporter or similar
+# echo "Adding VM $VMID to monitoring..."
+
+# Example 5: Set VM description with conversion info
+qm set "$VMID" --description "Converted from CT ${CTID} on $(date '+%Y-%m-%d %H:%M')"
+
+# Example 6: Create firewall rules for the VM
+# cat > "/etc/pve/firewall/${VMID}.fw" <<EOF
+# [RULES]
+# IN ACCEPT -p tcp -dport 22 -log nolog # SSH
+# IN ACCEPT -p tcp -dport 80 -log nolog # HTTP
+# EOF
+
+# Example 7: Record conversion time metrics
+# if [[ -f "/tmp/convert-start-${CTID}.timestamp" ]]; then
+#     START_TIME=$(cat "/tmp/convert-start-${CTID}.timestamp")
+#     END_TIME=$(date +%s)
+#     DURATION=$((END_TIME - START_TIME))
+#     echo "Conversion took ${DURATION} seconds" | tee -a "$HOOK_LOG_FILE"
+#     rm -f "/tmp/convert-start-${CTID}.timestamp"
+# fi
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Post-convert hook completed" | tee -a "$HOOK_LOG_FILE"
+exit 0

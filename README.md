@@ -586,7 +586,54 @@ sudo ./lxc-to-vm.sh --batch conversions.txt
 sudo ./lxc-to-vm.sh --batch conversions.txt --parallel 4
 ```
 
----
+#### Range Conversion (`--range`)
+
+Convert sequential CTID/VMID ranges:
+
+```bash
+# Convert CT 100-110 to VM 200-210 (11 containers)
+sudo ./lxc-to-vm.sh --range 100-110:200-210 -s local-lvm
+```
+
+**Syntax:** `--range CT_START-CT_END:VM_START-VM_END`
+
+- Range sizes must match (same number of CTs and VMs)
+- All other flags apply to each conversion in the range
+- Supports `--parallel` for concurrent processing
+
+**Example with options:**
+
+```bash
+# Convert with shrinking and auto-start
+sudo ./lxc-to-vm.sh --range 100-105:200-205 \
+  -s local-lvm --shrink --start --snapshot
+```
+
+### 🔗 API & Cluster Operations
+
+**Migrate container to local node before conversion:**
+
+```bash
+# Container is on another node in the cluster
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
+  --migrate-to-local --api-host 192.168.1.10 \
+  --api-token "root@pam!tokenname=xxxx-xxxx-xxxx"
+```
+
+**Required for cluster operations:**
+
+| Option | Description | Example |
+| ------ | ----------- | ------- |
+| `--api-host` | Proxmox node hostname/IP | `pve-node2.local` |
+| `--api-token` | API token for authentication | `root@pam!tokenname=xxxxx` |
+| `--api-user` | API user (optional) | `root@pam` (default) |
+
+**Creating an API token:**
+
+```bash
+# On the Proxmox host
+pveum user token add root@pam conversion-token --privsep=0
+```
 
 ### 📉 shrink-lxc.sh — Disk Shrinker
 
@@ -725,7 +772,32 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
   --snapshot --rollback-on-failure --shrink --start --destroy-source
 ```
 
-### 📊 Pre-Flight Validation (`--validate-only`)
+### � Replace Existing VM (`--replace-vm`)
+
+Replace an existing VM (useful for re-converting with updated settings):
+
+```bash
+# Convert and replace VM 200 if it exists
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
+  --replace-vm --shrink --start
+```
+
+**What happens:**
+
+1. Checks if VM 200 exists
+2. Stops the VM if running
+3. Destroys the VM and all its disks
+4. Proceeds with fresh conversion
+
+**Use cases:**
+
+- Re-convert after fixing container issues
+- Update VM configuration (UEFI → BIOS, different storage)
+- CI/CD pipelines that rebuild VMs repeatedly
+
+**⚠️ Warning:** This permanently deletes the existing VM. Use with caution.
+
+### �📊 Pre-Flight Validation (`--validate-only`)
 
 Check readiness without converting:
 
@@ -745,6 +817,39 @@ Checks:
 
 Output includes readiness score and recommendations.
 
+### 📈 Predictive Disk Sizing (`--predict-size`)
+
+Uses historical conversion data to recommend optimal disk sizes:
+
+```bash
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --predict-size
+```
+
+**How it works:**
+
+- Analyzes past conversions from `/var/log/lxc-to-vm*.log`
+- Calculates growth trends and confidence levels
+- Recommends: current_usage + (trend × 6 months) + 3GB overhead
+
+**Output example:**
+
+```text
+🟢 Confidence: HIGH
+Historical range: 12GB - 18GB (avg: 15GB)
+Growth trend: ~1GB per conversion
+Recommendation: 24GB
+```
+
+**Confidence levels:**
+
+| Emoji | Level | Data Points |
+| ----- | ----- | ----------- |
+| 🟢 | High | > 10 conversions |
+| 🟡 | Medium | 5-10 conversions |
+| 🔴 | Low | < 5 conversions |
+
+If no history exists, falls back to: `current_usage + 5GB`
+
 ### ☁️ Cloud/Remote Export (`--export-to`)
 
 Export VM disk after conversion:
@@ -763,7 +868,67 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
   --export-to ssh://backup-server:/storage/vms/
 ```
 
-### 📋 VM Template Creation (`--as-template`, `--sysprep`)
+### 🤖 Plugin/Hook System
+
+Execute custom scripts at key conversion stages for notifications, backups, monitoring, and more.
+
+**Hook Directory:** `/var/lib/lxc-to-vm/hooks/`
+
+**Available Hooks:**
+
+| Hook | Trigger Point | Use Case |
+| ---- | -------------- | -------- |
+| `pre-shrink` | Before container shrinking | Cleanup caches, prepare container |
+| `post-shrink` | After successful shrink | Log new size, restart container |
+| `pre-convert` | Before conversion starts | Create backups, send notifications |
+| `post-convert` | After successful VM creation | Configure VM, add to monitoring |
+| `health-check-failed` | When health checks fail | Send alerts, collect diagnostics |
+| `pre-destroy` | Before destroying source | Final verification, audit logging |
+
+**Environment Variables Available:**
+
+- `HOOK_CTID` - Container ID
+- `HOOK_VMID` - VM ID
+- `HOOK_STAGE` - Hook name (e.g., `pre-convert`)
+- `HOOK_LOG_FILE` - Path to main conversion log
+
+**Basic Hook Example:**
+
+```bash
+#!/bin/bash
+# /var/lib/lxc-to-vm/hooks/post-convert
+
+CTID="$1"
+VMID="$2"
+
+echo "[$(date)] VM $VMID converted from CT $CTID" >> "$HOOK_LOG_FILE"
+
+# Send notification
+# curl -X POST "https://ntfy.sh/ops" -d "VM $VMID ready"
+
+# Add to monitoring
+# curl -X POST "http://monitoring.internal/api/vms" \
+#     -d "{\"vmid\":$VMID,\"source\":$CTID}"
+exit 0
+```
+
+**Install Hooks:**
+
+```bash
+sudo mkdir -p /var/lib/lxc-to-vm/hooks
+sudo cp examples/hooks/pre-convert /var/lib/lxc-to-vm/hooks/
+sudo chmod +x /var/lib/lxc-to-vm/hooks/*
+```
+
+See `examples/hooks/` for complete examples including:
+
+- Pre-conversion backups with `vzdump`
+- Post-conversion VM configuration
+- Health check failure alerts (PagerDuty/Slack)
+- Container cleanup before shrinking
+- Safety guards preventing source destruction
+
+### � VM Template Creation (`--as-template`, `--sysprep`)
 
 Create golden images:
 

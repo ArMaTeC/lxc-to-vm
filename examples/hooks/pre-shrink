@@ -1,0 +1,36 @@
+#!/bin/bash
+# ==============================================================================
+# Hook: pre-shrink
+# Description: Runs before container shrinking - useful for cleanup or preparation
+# ==============================================================================
+
+CTID="$1"
+VMID="$2"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pre-shrink hook: Preparing CT $CTID for shrinking" | tee -a "$HOOK_LOG_FILE"
+
+# Example 1: Clean up package caches to reduce container size
+pct exec "$CTID" -- /bin/bash -c '
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get clean
+        apt-get autoclean
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf clean all
+    elif command -v yum >/dev/null 2>&1; then
+        yum clean all
+    fi
+' 2>/dev/null || true
+
+# Example 2: Truncate logs to reduce size
+pct exec "$CTID" -- find /var/log -type f -name "*.log" -exec truncate -s 0 {} \; 2>/dev/null || true
+
+# Example 3: Clear temporary files
+pct exec "$CTID" -- rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+
+# Example 4: Zero out free space for better compression (optional, takes time)
+# echo "Zeroing free space for better shrink efficiency..."
+# pct exec "$CTID" -- dd if=/dev/zero of=/zero.fill bs=1M 2>/dev/null || true
+# pct exec "$CTID" -- rm -f /zero.fill 2>/dev/null || true
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pre-shrink hook completed" | tee -a "$HOOK_LOG_FILE"
+exit 0

@@ -1,0 +1,51 @@
+#!/bin/bash
+# ==============================================================================
+# Hook: health-check-failed
+# Description: Runs when post-conversion health checks fail - useful for alerting
+#              or automatic remediation attempts
+# ==============================================================================
+
+CTID="$1"
+VMID="$2"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Health-check-failed hook: VM $VMID has issues" | tee -a "$HOOK_LOG_FILE"
+
+# Example 1: Send alert/notification
+# curl -s -X POST "https://ntfy.sh/alerts" \
+#     -d "Conversion health check failed: CT $CTID → VM $VMID"
+
+# Example 2: Collect detailed diagnostics
+DIAG_FILE="/var/log/lxc-to-vm-health-fail-${VMID}-$(date +%Y%m%d-%H%M%S).log"
+{
+    echo "=== Health Check Failure Diagnostics ==="
+    echo "CTID: $CTID, VMID: $VMID"
+    echo "Time: $(date)"
+    echo ""
+    echo "=== VM Status ==="
+    qm status "$VMID" 2>&1 || true
+    echo ""
+    echo "=== VM Config ==="
+    qm config "$VMID" 2>&1 || true
+    echo ""
+    echo "=== VM Log (last 50 lines) ==="
+    tail -50 /var/log/lxc-to-vm.log 2>/dev/null || true
+} > "$DIAG_FILE"
+
+echo "Diagnostics saved to: $DIAG_FILE" | tee -a "$HOOK_LOG_FILE"
+
+# Example 3: Attempt automatic remediation - restart VM
+# echo "Attempting to restart VM $VMID..."
+# qm stop "$VMID" 2>/dev/null || true
+# sleep 5
+# qm start "$VMID" 2>/dev/null || true
+# sleep 30
+
+# Example 4: Rollback if automatic remediation failed
+# echo "Attempting rollback..."
+# pct rollback "$CTID" "pre-conversion-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+
+# Example 5: Tag VM for manual review
+qm set "$VMID" --tags "health-failed,needs-review"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Health-check-failed hook completed" | tee -a "$HOOK_LOG_FILE"
+exit 0

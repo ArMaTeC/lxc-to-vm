@@ -1,0 +1,28 @@
+#!/bin/bash
+# ==============================================================================
+# Hook: post-shrink
+# Description: Runs after successful container shrinking
+# ==============================================================================
+
+CTID="$1"
+VMID="$2"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Post-shrink hook: CT $CTID shrink completed" | tee -a "$HOOK_LOG_FILE"
+
+# Example 1: Log the new container size
+NEW_SIZE=$(pct df "$CTID" 2>/dev/null | awk '/^rootfs/{print $3}' | numfmt --from=iec)
+if [[ -n "$NEW_SIZE" ]]; then
+    SIZE_GB=$((NEW_SIZE / 1024 / 1024 / 1024))
+    echo "Container size after shrink: ${SIZE_GB}GB" | tee -a "$HOOK_LOG_FILE"
+fi
+
+# Example 2: Restart container if it was running before shrink
+# (Container is stopped during shrink - restart if needed)
+# pct start "$CTID" 2>/dev/null || true
+
+# Example 3: Verify container still boots correctly
+# echo "Verifying container starts after shrink..."
+# pct start "$CTID" && sleep 5 && pct stop "$CTID"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Post-shrink hook completed" | tee -a "$HOOK_LOG_FILE"
+exit 0
