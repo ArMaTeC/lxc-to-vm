@@ -1,0 +1,57 @@
+#!/bin/bash
+# ==============================================================================
+# vm-to-lxc.sh — Example Hook: pre-destroy
+# ==============================================================================
+# Runs BEFORE destroying the source VM (only when --destroy-source is used).
+# Use this for final backups, audit logging, or safety checks.
+#
+# Arguments:
+#   $1 = Source VM ID (VMID)
+#   $2 = Target Container ID (CTID)
+#
+# Environment variables available:
+#   HOOK_VMID      — Source VM ID
+#   HOOK_CTID      — Target container ID
+#   HOOK_LOG_FILE  — Path to conversion log file
+#   HOOK_STAGE     — Hook stage name (pre-destroy)
+# ==============================================================================
+
+VMID="${1:-$HOOK_VMID}"
+CTID="${2:-$HOOK_CTID}"
+
+echo "[pre-destroy] Preparing to destroy source VM $VMID (target CT: $CTID)"
+echo "[pre-destroy] Timestamp: $(date -Is)"
+
+# --- Example: Verify container health before destroying VM ---
+# CT_STATUS=$(pct status "$CTID" 2>/dev/null | awk '{print $2}')
+# if [[ "$CT_STATUS" != "running" ]]; then
+#     echo "[pre-destroy] WARNING: Container $CTID is not running ($CT_STATUS)."
+#     echo "[pre-destroy] Aborting source VM destruction for safety."
+#     exit 1  # Non-zero exit prevents destruction
+# fi
+
+# --- Example: Create a final backup of the VM ---
+# mkdir -p /var/backups/vm-final
+# qm config "$VMID" > "/var/backups/vm-final/vm-${VMID}-final-$(date +%Y%m%d).conf" 2>/dev/null || true
+# vzdump "$VMID" --mode snapshot --storage local --compress zstd 2>/dev/null || true
+
+# --- Example: Log final VM state for audit ---
+# {
+#     echo "=== VM $VMID Final State ==="
+#     echo "Date: $(date -Is)"
+#     echo "Converted to CT: $CTID"
+#     qm config "$VMID" 2>/dev/null || true
+#     echo "=== END ==="
+# } >> "/var/log/vm-to-lxc-audit.log"
+
+# --- Example: Archive VM configuration ---
+# mkdir -p /var/lib/vm-to-lxc/archived-configs
+# cp "/etc/pve/qemu-server/${VMID}.conf" \
+#    "/var/lib/vm-to-lxc/archived-configs/vm-${VMID}-$(date +%Y%m%d).conf" 2>/dev/null || true
+
+# --- Example: Send notification ---
+# curl -s -X POST "https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+#     -H 'Content-Type: application/json' \
+#     -d "{\"text\":\"Destroying source VM $VMID after successful conversion to CT $CTID\"}" || true
+
+exit 0

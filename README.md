@@ -1,4 +1,4 @@
-# 🚀 Proxmox LXC to VM Converter
+# 🚀 Proxmox LXC ↔ VM Converter
 
 <!-- markdownlint-disable MD013 -->
 
@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 [![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen.svg?style=for-the-badge)](.github/workflows/shellcheck.yml)
 
-**Convert Proxmox LXC containers into fully bootable QEMU/KVM virtual machines** ⚡
+**Convert Proxmox LXC containers into fully bootable QEMU/KVM virtual machines — and back again!** ⚡
 
 [📖 Quick Start](#-quick-start) • [✨ Features](#-features) • [🛠️ Installation](#installation) • [📚 Documentation](#-documentation)
 
@@ -52,7 +52,30 @@
 | 🎨 **Colored Output** | Beautiful, color-coded progress messages |
 | 📝 **Full Logging** | All operations logged to `/var/log/lxc-to-vm.log` |
 
-### 💿 Disk Shrinker (`shrink-lxc.sh`)
+### � Reverse Conversion (`vm-to-lxc.sh`)
+
+| Feature | Description |
+| ------- | ----------- |
+| ⚡ **One-Command Conversion** | Convert any KVM VM to an LXC container instantly |
+| 🐧 **Multi-Distro Support** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, Arch Linux (auto-detected) |
+| 🧹 **VM Artifact Cleanup** | Automatically removes kernel, bootloader, initramfs, modules |
+| 🌐 **Network Migration** | Translates VM network config (`ens18` → `eth0`) for container use |
+| 📏 **Auto Disk Sizing** | Analyzes VM content and recommends optimal container disk size |
+| 🔍 **Dry-Run Mode** | Preview every step without making changes |
+| 🌐 **Network Preservation** | Keep original network config or auto-translate for LXC |
+| ✅ **Auto-Start & Health Checks** | Start container and verify exec, IP, and OS info |
+| 🛡️ **Snapshot & Rollback** | Create VM snapshot before conversion with automatic rollback |
+| 📊 **Batch Processing** | Convert multiple VMs with `--batch` or `--range` |
+| ⚡ **Parallel Execution** | Run N conversions concurrently with `--parallel` |
+| 🧙 **Wizard Mode** | Interactive TUI with guided setup |
+| 💾 **Resume Capability** | Resume interrupted conversions from partial state |
+| 🔌 **Plugin/Hook System** | Inject custom scripts at conversion stages |
+| 🔒 **Unprivileged Containers** | Create unprivileged LXC containers with `--unprivileged` |
+| 📈 **Predictive Sizing** | Filesystem analysis for disk size recommendations |
+| 🎨 **Colored Output** | Beautiful, color-coded progress messages |
+| 📝 **Full Logging** | All operations logged to `/var/log/vm-to-lxc.log` |
+
+### � Disk Shrinker (`shrink-lxc.sh`)
 
 | Feature | Description |
 | ------- | ----------- |
@@ -80,31 +103,42 @@
 | Requirement | Details |
 | ----------- | ------- |
 | 🖥️ **Proxmox VE** | Version 7.x, 8.x, or 9.x |
-| 📦 **Source LXC** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, or Arch based |
+| 📦 **Source** | LXC container (for `lxc-to-vm.sh`) or KVM VM (for `vm-to-lxc.sh`) |
+| 🐧 **Guest OS** | Debian, Ubuntu, Alpine, CentOS/RHEL/Rocky, or Arch based |
 | 🔑 **Root Access** | Must run as `root` on Proxmox host |
 | 💾 **Disk Space** | Filesystem space ≥ disk image size |
-| 🌐 **Network** | Internet access (for kernel/GRUB installation) |
+| 🌐 **Network** | Internet access (for kernel/GRUB installation in `lxc-to-vm.sh`) |
 
 ### 📋 Dependencies (Auto-Installed)
 
-- `parted` — Disk partitioning
+**Both scripts:**
+
 - `kpartx` — Partition mapping for loop devices
 - `rsync` — Filesystem copy
+
+**`lxc-to-vm.sh` additional:**
+
+- `parted` — Disk partitioning
 - `e2fsprogs` — ext4 formatting and tools
 - `dosfstools` — FAT32 formatting for UEFI ESP
+
+**`vm-to-lxc.sh` additional:**
+
+- `qemu-utils` — Disk image inspection and format conversion (`qemu-img`)
 
 ---
 
 ## 🚀 Quick Start
 
-### ⚡ Fastest Method — Shrink & Convert in One Command
+### ⚡ LXC → VM (Fastest Method — Shrink & Convert)
 
 ```bash
 # Download scripts
-rm lxc-to-vm.sh shrink-lxc.sh
+rm -f lxc-to-vm.sh shrink-lxc.sh vm-to-lxc.sh
 wget https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
 wget https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh
-chmod +x lxc-to-vm.sh shrink-lxc.sh
+wget https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh
+chmod +x lxc-to-vm.sh shrink-lxc.sh vm-to-lxc.sh
 
 # Convert with shrink and auto-start
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
@@ -112,21 +146,34 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 
 This shrinks the container disk to minimum safe size, converts it to a VM, and boots it — **all automatically**. No disk size needed! 🎉
 
+### 🔄 VM → LXC (Convert VM Back to Container)
+
+```bash
+# Convert VM 200 to container 100 with auto-start
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --start
+```
+
+This stops the VM, extracts its filesystem, removes VM artifacts (kernel, bootloader, modules), creates an LXC container, and starts it — **all automatically**. Disk size is auto-calculated! 🎉
+
 ### 📂 Clone the Repository
 
 ```bash
 git clone https://github.com/ArMaTeC/lxc-to-vm.git
 cd lxc-to-vm
-chmod +x lxc-to-vm.sh shrink-lxc.sh
+chmod +x lxc-to-vm.sh shrink-lxc.sh vm-to-lxc.sh
 ```
 
 ### 💬 Interactive Mode
 
 ```bash
+# LXC → VM
 sudo ./lxc-to-vm.sh
+
+# VM → LXC
+sudo ./vm-to-lxc.sh
 ```
 
-You'll be prompted for container ID, VM ID, storage, and disk size.
+You'll be prompted for source ID, target ID, storage, and disk size.
 
 ---
 
@@ -139,7 +186,8 @@ No installation required! Just download and run. 🎉
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh
 curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh -o shrink-lxc.sh
-chmod +x lxc-to-vm.sh shrink-lxc.sh
+curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh -o vm-to-lxc.sh
+chmod +x lxc-to-vm.sh shrink-lxc.sh vm-to-lxc.sh
 ```
 
 ---
@@ -200,14 +248,107 @@ sudo ./lxc-to-vm.sh --batch conversions.txt --parallel 4
 
 ---
 
+## 📖 VM to LXC Usage (`vm-to-lxc.sh`)
+
+### 🎯 Basic VM to LXC Conversion
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm -d 16
+```
+
+### 📏 Auto-Size + Auto-Start (Recommended)
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --start
+```
+
+Disk size is auto-calculated from VM content. The VM is stopped, its filesystem extracted, cleaned of VM artifacts, packaged into a container, and started — **all automatically**. 🚀
+
+### 🔍 Preview Conversion (vm-to-lxc dry-run)
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --dry-run
+```
+
+### 🌐 Preserve Network Config (vm-to-lxc)
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --keep-network
+```
+
+### 🔒 Create Unprivileged Container
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --unprivileged --start
+```
+
+### 🛡️ Safe Conversion with Snapshot & Rollback
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm \
+  --snapshot --rollback-on-failure --start
+```
+
+### 📊 Batch Convert VMs to Containers
+
+```bash
+# Create conversions.txt with VMID CTID pairs
+cat > conversions.txt << 'EOF'
+200 100
+201 101
+205 105
+EOF
+
+sudo ./vm-to-lxc.sh --batch conversions.txt
+```
+
+### ⚡ Parallel Batch Execution (vm-to-lxc)
+
+```bash
+# Convert 4 VMs simultaneously
+sudo ./vm-to-lxc.sh --batch conversions.txt --parallel 4
+```
+
+### 📐 Range Conversion
+
+```bash
+# Convert VMs 200-210 to CTs 100-110
+sudo ./vm-to-lxc.sh --range 200-210:100-110 -s local-lvm
+```
+
+### 🗑️ Full Migration (Convert + Destroy Source)
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm \
+  --snapshot --rollback-on-failure --start --destroy-source
+```
+
+### 🔄 Replace Existing Container
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --replace-ct --start
+```
+
+### 🧙 Wizard Mode (vm-to-lxc)
+
+```bash
+sudo ./vm-to-lxc.sh --wizard
+```
+
+---
+
 ## 🔧 Advanced Features
 
-### 🧙 Wizard Mode
+### 🧙 Wizard Mode (`--wizard`)
 
 Launch an interactive TUI with progress bars and guided setup:
 
 ```bash
+# LXC → VM
 sudo ./lxc-to-vm.sh --wizard
+
+# VM → LXC
+sudo ./vm-to-lxc.sh --wizard
 ```
 
 ### 💾 Snapshot & Rollback Safety
@@ -370,11 +511,12 @@ See the [LICENSE](LICENSE) file for details.
 
 ### 📁 Scripts Overview
 
-This project includes two companion scripts:
+This project includes three companion scripts:
 
 | Script | Purpose | Version |
 | ------ | ------- | ------- |
 | **`lxc-to-vm.sh`** | Converts LXC containers to bootable VMs | 6.0.6 |
+| **`vm-to-lxc.sh`** | Converts KVM VMs to LXC containers | 1.0.0 |
 | **`shrink-lxc.sh`** | Shrinks LXC disks before conversion | 6.0.6 |
 
 ---
@@ -477,11 +619,13 @@ curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
 ```bash
 # Copy to system path
 sudo cp lxc-to-vm.sh /usr/local/bin/lxc-to-vm
+sudo cp vm-to-lxc.sh /usr/local/bin/vm-to-lxc
 sudo cp shrink-lxc.sh /usr/local/bin/shrink-lxc
-sudo chmod +x /usr/local/bin/lxc-to-vm /usr/local/bin/shrink-lxc
+sudo chmod +x /usr/local/bin/lxc-to-vm /usr/local/bin/vm-to-lxc /usr/local/bin/shrink-lxc
 
 # Now run from anywhere
 sudo lxc-to-vm -c 100 -v 200 -s local-lvm
+sudo vm-to-lxc -v 200 -c 100 -s local-lvm
 ```
 
 ---
@@ -678,16 +822,174 @@ Shows shrink plan without executing.
 - **Directory (qcow2)**: Convert → shrink → convert back
 - **ZFS**: `resize2fs` + `zfs set volsize`
 
+### 🔄 vm-to-lxc.sh — Reverse Converter
+
+#### Basic VM to LXC Conversion (Non-Interactive)
+
+```bash
+sudo ./vm-to-lxc.sh -v <VMID> -c <CTID> -s <storage> -d <disk_size>
+```
+
+Example:
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm -d 16
+```
+
+#### Interactive Mode (vm-to-lxc.sh)
+
+```bash
+sudo ./vm-to-lxc.sh
+```
+
+Sample output:
+
+```text
+==========================================
+   PROXMOX VM TO LXC CONVERTER v1.0.0
+==========================================
+Enter Source VM ID (e.g., 200): 200
+Enter New Container ID (e.g., 100): 100
+Enter Target Storage Name (e.g., local-lvm): local-lvm
+```
+
+#### Auto-Size + Auto-Start (Recommended)
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --start
+```
+
+Benefits:
+
+- Automatically calculates container disk size from VM content
+- No need to specify disk size
+- Removes kernel, bootloader, modules automatically
+- Starts and verifies container
+
+#### Dry-Run Preview (vm-to-lxc.sh)
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --dry-run
+```
+
+Shows full summary without making changes:
+
+- Source/target config
+- VM memory/cores
+- Disk space check
+- Step-by-step plan
+
+#### Keep Network Configuration (vm-to-lxc.sh)
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --keep-network
+```
+
+Preserves original network config. Without this flag, `ens18` is automatically translated to `eth0`.
+
+#### Unprivileged Container
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --unprivileged --start
+```
+
+Creates an unprivileged (more secure) LXC container.
+
+#### Batch Conversion (vm-to-lxc.sh)
+
+Create `conversions.txt`:
+
+```text
+# Format: <VMID> <CTID>
+200 100
+201 101
+205 105
+```
+
+Run batch:
+
+```bash
+sudo ./vm-to-lxc.sh --batch conversions.txt
+```
+
+#### Range Conversion (vm-to-lxc.sh)
+
+Convert sequential VMID/CTID ranges:
+
+```bash
+# Convert VM 200-210 to CT 100-110 (11 VMs)
+sudo ./vm-to-lxc.sh --range 200-210:100-110 -s local-lvm
+```
+
+**Syntax:** `--range VM_START-VM_END:CT_START-CT_END`
+
+- Range sizes must match (same number of VMs and CTs)
+- All other flags apply to each conversion in the range
+- Supports `--parallel` for concurrent processing
+
+#### API & Cluster Operations (vm-to-lxc.sh)
+
+**Migrate VM to local node before conversion:**
+
+```bash
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm \
+  --migrate-to-local --api-host 192.168.1.10 \
+  --api-token "root@pam!tokenname=xxxx-xxxx-xxxx"
+```
+
+#### How vm-to-lxc.sh Works
+
+```text
+┌─────────────────────────────────────────────────┐
+│  1️⃣ ARGUMENT PARSING & VALIDATION               │
+│     Parse CLI flags or prompt interactively     │
+├─────────────────────────────────────────────────┤
+│  2️⃣ VM DISK MOUNTING                            │
+│     Stop VM, mount disk via kpartx/loop device  │
+│     Auto-detect root partition (ext4/xfs/btrfs) │
+├─────────────────────────────────────────────────┤
+│  3️⃣ DISTRO DETECTION & DISK SIZE CALCULATION    │
+│     Read /etc/os-release, analyze usage         │
+│     Auto-calculate container disk size          │
+├─────────────────────────────────────────────────┤
+│  4️⃣ FILESYSTEM COPY                             │
+│     rsync with progress, excluding VM artifacts │
+├─────────────────────────────────────────────────┤
+│  5️⃣ VM ARTIFACT CLEANUP                         │
+│     Remove kernel, bootloader, initramfs        │
+│     Remove modules, GRUB config, fstab          │
+│     Remove qemu-guest-agent, serial console     │
+├─────────────────────────────────────────────────┤
+│  6️⃣ NETWORK RECONFIGURATION                     │
+│     Translate ens18 → eth0 (or preserve)        │
+│     Update netplan, ifcfg, NetworkManager       │
+├─────────────────────────────────────────────────┤
+│  7️⃣ CONTAINER CREATION                          │
+│     Create tarball, pct create with settings    │
+│     Apply memory, cores, network from VM config │
+├─────────────────────────────────────────────────┤
+│  8️⃣ POST-CONVERSION VALIDATION                  │
+│     Check container config, rootfs, network     │
+├─────────────────────────────────────────────────┤
+│  9️⃣ AUTO-START & HEALTH CHECK (if --start)     │
+│     Start container, verify exec, IP, OS info   │
+└─────────────────────────────────────────────────┘
+```
+
 ---
 
 ## 🔬 Feature Deep Dives
 
-### 🧙 Wizard Mode (`--wizard`)
+### 🧙 Wizard Mode Deep Dive (`--wizard`)
 
 Interactive TUI with progress bars:
 
 ```bash
+# LXC → VM
 sudo ./lxc-to-vm.sh --wizard
+
+# VM → LXC
+sudo ./vm-to-lxc.sh --wizard
 ```
 
 Guides through:
@@ -872,9 +1174,14 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
 
 Execute custom scripts at key conversion stages for notifications, backups, monitoring, and more.
 
-**Hook Directory:** `/var/lib/lxc-to-vm/hooks/`
+**Hook Directories:**
 
-**Available Hooks:**
+| Script | Hook Directory | Examples |
+| ------ | -------------- | -------- |
+| `lxc-to-vm.sh` | `/var/lib/lxc-to-vm/hooks/` | `examples/hooks/` |
+| `vm-to-lxc.sh` | `/var/lib/vm-to-lxc/hooks/` | `examples-vm-to-lxc/hooks/` |
+
+**Available Hooks (`lxc-to-vm.sh`):**
 
 | Hook | Trigger Point | Use Case |
 | ---- | -------------- | -------- |
@@ -885,14 +1192,23 @@ Execute custom scripts at key conversion stages for notifications, backups, moni
 | `health-check-failed` | When health checks fail | Send alerts, collect diagnostics |
 | `pre-destroy` | Before destroying source | Final verification, audit logging |
 
-**Environment Variables Available:**
+**Available Hooks (`vm-to-lxc.sh`):**
+
+| Hook | Trigger Point | Use Case |
+| ---- | -------------- | -------- |
+| `pre-convert` | Before conversion starts | Create backups, send notifications |
+| `post-convert` | After successful CT creation | Configure container, add to monitoring |
+| `health-check-failed` | When health checks fail | Send alerts, collect diagnostics |
+| `pre-destroy` | Before destroying source VM | Final verification, audit logging |
+
+**Environment Variables Available (both scripts):**
 
 - `HOOK_CTID` - Container ID
 - `HOOK_VMID` - VM ID
 - `HOOK_STAGE` - Hook name (e.g., `pre-convert`)
 - `HOOK_LOG_FILE` - Path to main conversion log
 
-**Basic Hook Example:**
+**Basic Hook Example (`lxc-to-vm.sh`):**
 
 ```bash
 #!/bin/bash
@@ -905,25 +1221,43 @@ echo "[$(date)] VM $VMID converted from CT $CTID" >> "$HOOK_LOG_FILE"
 
 # Send notification
 # curl -X POST "https://ntfy.sh/ops" -d "VM $VMID ready"
+exit 0
+```
 
-# Add to monitoring
-# curl -X POST "http://monitoring.internal/api/vms" \
-#     -d "{\"vmid\":$VMID,\"source\":$CTID}"
+**Basic Hook Example (`vm-to-lxc.sh`):**
+
+```bash
+#!/bin/bash
+# /var/lib/vm-to-lxc/hooks/post-convert
+
+VMID="$1"
+CTID="$2"
+
+echo "[$(date)] CT $CTID created from VM $VMID" >> "$HOOK_LOG_FILE"
+
+# Enable nesting for Docker-in-LXC
+# pct set "$CTID" --features nesting=1
 exit 0
 ```
 
 **Install Hooks:**
 
 ```bash
+# For lxc-to-vm.sh
 sudo mkdir -p /var/lib/lxc-to-vm/hooks
 sudo cp examples/hooks/pre-convert /var/lib/lxc-to-vm/hooks/
 sudo chmod +x /var/lib/lxc-to-vm/hooks/*
+
+# For vm-to-lxc.sh
+sudo mkdir -p /var/lib/vm-to-lxc/hooks
+sudo cp examples-vm-to-lxc/hooks/pre-convert /var/lib/vm-to-lxc/hooks/
+sudo chmod +x /var/lib/vm-to-lxc/hooks/*
 ```
 
-See `examples/hooks/` for complete examples including:
+See `examples/hooks/` and `examples-vm-to-lxc/hooks/` for complete examples including:
 
 - Pre-conversion backups with `vzdump`
-- Post-conversion VM configuration
+- Post-conversion VM/CT configuration
 - Health check failure alerts (PagerDuty/Slack)
 - Container cleanup before shrinking
 - Safety guards preventing source destruction
@@ -1035,6 +1369,43 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
+### vm-to-lxc.sh Options
+
+| Short | Long | Description | Default |
+| ----- | ---- | ----------- | ------- |
+| `-v` | `--vmid` | Source KVM VM ID | Prompted |
+| `-c` | `--ctid` | Target LXC container ID | Prompted |
+| `-s` | `--storage` | Proxmox storage name | Prompted |
+| `-d` | `--disk-size` | Container disk size in GB | Auto-calculated |
+| `-b` | `--bridge` | Network bridge name | `vmbr0` |
+| `-t` | `--temp-dir` | Working directory for temp files | `/var/lib/vz/dump` |
+| `-n` | `--dry-run` | Preview without changes | — |
+| `-k` | `--keep-network` | Preserve original network config (skip ens18 → eth0) | — |
+| `-S` | `--start` | Auto-start container with health checks | — |
+| | `--snapshot` | Create VM snapshot before conversion | — |
+| | `--rollback-on-failure` | Auto-rollback on failure | — |
+| | `--destroy-source` | Destroy original VM after success | — |
+| | `--replace-ct` | Replace existing container (stop & destroy if CTID exists) | — |
+| | `--resume` | Resume interrupted conversion | — |
+| | `--parallel <N>` | Run N conversions in parallel | `1` |
+| | `--validate-only` | Run pre-flight checks only | — |
+| | `--unprivileged` | Create unprivileged container | — |
+| | `--password <PASS>` | Set root password for the container | — |
+| | `--wizard` | Start interactive TUI wizard | — |
+| | `--save-profile <NAME>` | Save options as named profile | — |
+| | `--profile <NAME>` | Load options from saved profile | — |
+| | `--list-profiles` | List all saved profiles | — |
+| | `--predict-size` | Use predictive disk sizing | — |
+| | `--batch <FILE>` | Batch conversion from file | — |
+| | `--range <SPEC>` | Range conversion (e.g., 200-210:100-110) | — |
+| | `--migrate-to-local` | Migrate VM to local node | — |
+| | `--api-host <HOST>` | Proxmox API host | — |
+| | `--api-token <TOKEN>` | Proxmox API token | — |
+| | `--api-user <USER>` | Proxmox API user | `root@pam` |
+| | `--no-auto-fix` | Disable automatic remediation on health check failures | — |
+| `-h` | `--help` | Show help message | — |
+| `-V` | `--version` | Print version | — |
+
 ### shrink-lxc.sh Options
 
 | Short | Long | Description | Default |
@@ -1056,6 +1427,18 @@ sudo ./lxc-to-vm.sh -c 100 -v 900 -s local-lvm --as-template --sysprep
 | `0` | `E_SUCCESS` | ✅ Success |
 | `1` | `E_INVALID_ARG` | ❌ Invalid arguments |
 | `2` | `E_NOT_FOUND` | ❌ Container/VM/storage not found |
+| `3` | `E_DISK_FULL` | ❌ Disk space issue |
+| `4` | `E_PERMISSION` | ❌ Permission denied |
+| `5` | `E_MIGRATION` | ❌ Cluster migration failed |
+| `6` | `E_CONVERSION` | ❌ Core conversion failed |
+
+### vm-to-lxc.sh
+
+| Code | Name | Meaning |
+| ---- | ---- | ------- |
+| `0` | `E_SUCCESS` | ✅ Success |
+| `1` | `E_INVALID_ARG` | ❌ Invalid arguments |
+| `2` | `E_NOT_FOUND` | ❌ VM/container/storage not found |
 | `3` | `E_DISK_FULL` | ❌ Disk space issue |
 | `4` | `E_PERMISSION` | ❌ Permission denied |
 | `5` | `E_MIGRATION` | ❌ Cluster migration failed |
@@ -1139,7 +1522,71 @@ pct destroy <CTID>
 
 ---
 
-## 🐛 Troubleshooting
+## � Post-Conversion Steps (`vm-to-lxc.sh`)
+
+After `vm-to-lxc.sh` completes (if you didn't use `--start`):
+
+### 1. Review Container Configuration
+
+```bash
+pct config <CTID>
+```
+
+### 2. Start the Container
+
+```bash
+pct start <CTID>
+```
+
+### 3. Enter Container Console
+
+```bash
+pct enter <CTID>
+```
+
+### 4. Verify Networking (LXC)
+
+Check `ip a` inside the container — interface should be `eth0` (or preserved config if `--keep-network`).
+
+### 5. Clean Up VM-Specific Packages (Optional)
+
+The script removes VM files automatically, but you may want to uninstall VM-specific packages:
+
+**Debian/Ubuntu:**
+
+```bash
+apt purge -y grub-pc grub-efi-amd64 linux-image-* linux-headers-* qemu-guest-agent
+apt autoremove -y
+```
+
+**Alpine:**
+
+```bash
+apk del grub linux-lts qemu-guest-agent
+```
+
+**RHEL/CentOS/Rocky:**
+
+```bash
+yum remove -y grub2 kernel kernel-core qemu-guest-agent
+```
+
+**Arch Linux:**
+
+```bash
+pacman -Rns grub linux qemu-guest-agent
+```
+
+### 6. Remove Original VM (after verifying container works)
+
+```bash
+qm stop <VMID>
+qm destroy <VMID>
+```
+
+---
+
+## � Troubleshooting
 
 ### VM Doesn't Boot
 
@@ -1245,9 +1692,65 @@ sudo ./shrink-lxc.sh -c 100 -g 5
 pct stop 100
 ```
 
+### Container Doesn't Start (`vm-to-lxc.sh`)
+
+**Check container config:**
+
+```bash
+pct config <CTID>
+```
+
+**Check rootfs:**
+
+```bash
+pct config <CTID> | grep rootfs
+```
+
+**Check conversion log:**
+
+```bash
+cat /var/log/vm-to-lxc.log
+```
+
+### No Network in Container (`vm-to-lxc.sh`)
+
+**Verify container network:**
+
+```bash
+pct config <CTID> | grep net0
+```
+
+**Check interface inside container:**
+
+```bash
+pct exec <CTID> -- ip a
+```
+
+Should show `eth0`. If using `--keep-network`, the original VM interface name (`ens18`) may still be present — rename it or update the container config.
+
+**Fix netplan (Ubuntu/Debian):**
+
+```bash
+pct exec <CTID> -- ls /etc/netplan/
+pct exec <CTID> -- netplan apply
+```
+
+### VM Disk Not Detected (`vm-to-lxc.sh`)
+
+If the script can't find the VM disk:
+
+```bash
+# Check VM disk config
+qm config <VMID> | grep -E '^(scsi|virtio|ide|sata)0:'
+
+# Check disk path
+pvesm path <volume-id>
+```
+
 ### Exit Code Handling in Automation
 
 ```bash
+# lxc-to-vm.sh
 ./lxc-to-vm.sh -c 126 -v 260 -s local-lvm -d 6
 rc=$?
 
@@ -1259,17 +1762,41 @@ case "$rc" in
   0) echo "Success" ;;
   *) echo "General failure (code $rc)" ;;
 esac
+
+# vm-to-lxc.sh
+./vm-to-lxc.sh -v 200 -c 100 -s local-lvm
+rc=$?
+
+case "$rc" in
+  2) echo "Missing resource (VM/CT/storage)" ;;
+  3) echo "Disk space issue" ;;
+  5) echo "Migration failure" ;;
+  6) echo "Conversion failure - check /var/log/vm-to-lxc.log" ;;
+  0) echo "Success" ;;
+  *) echo "General failure (code $rc)" ;;
+esac
 ```
 
 ---
 
 ## ⚠️ Limitations
 
+### Limitations: lxc-to-vm.sh
+
 - **Single-disk containers only** — Multi-mount-point LXC configs not handled
 - **No ZFS-to-ZFS native** — Disk created as raw image and imported
 - **Proxmox host only** — Must run directly on Proxmox VE node
 - **x86_64 only** — ARM containers not supported
 - **ext4 filesystems** — XFS, btrfs not supported for shrink/conversion
+
+### Limitations: vm-to-lxc.sh
+
+- **Single-disk VMs only** — Multi-disk VMs: only first disk is converted
+- **VM must be stoppable** — Running VMs are stopped for consistent copy
+- **Proxmox host only** — Must run directly on Proxmox VE node
+- **x86_64 only** — ARM VMs not supported
+- **Root partition detection** — Expects standard Linux partition layout (ext4/xfs/btrfs)
+- **VM-specific services** — Some VM services (e.g., kernel modules, DKMS) are removed; reinstall if needed in container
 
 ---
 
@@ -1293,6 +1820,6 @@ See [LICENSE](LICENSE) for details.
 
 ---
 
-**[⬆ Back to Top](#-proxmox-lxc-to-vm-converter)**
+**[⬆ Back to Top](#-proxmox-lxc--vm-converter)**
 
 Made with ❤️ by [ArMaTeC](https://github.com/ArMaTeC)

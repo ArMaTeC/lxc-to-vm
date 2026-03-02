@@ -1,0 +1,65 @@
+#!/bin/bash
+# ==============================================================================
+# vm-to-lxc.sh — Example Hook: health-check-failed
+# ==============================================================================
+# Runs when post-conversion health checks detect issues with the new container.
+# Use this for alerting, diagnostics collection, or automatic remediation.
+#
+# Arguments:
+#   $1 = Source VM ID (VMID)
+#   $2 = Target Container ID (CTID)
+#
+# Environment variables available:
+#   HOOK_VMID      — Source VM ID
+#   HOOK_CTID      — Target container ID
+#   HOOK_LOG_FILE  — Path to conversion log file
+#   HOOK_STAGE     — Hook stage name (health-check-failed)
+# ==============================================================================
+
+VMID="${1:-$HOOK_VMID}"
+CTID="${2:-$HOOK_CTID}"
+
+echo "[health-check-failed] Health check issues detected for CT $CTID (from VM $VMID)"
+echo "[health-check-failed] Timestamp: $(date -Is)"
+
+# --- Example: Send alert ---
+# curl -s -X POST "https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+#     -H 'Content-Type: application/json' \
+#     -d "{\"text\":\"⚠️ Health check failed for CT $CTID (converted from VM $VMID)\"}" || true
+
+# --- Example: Collect detailed diagnostics ---
+# {
+#     echo "=== CT $CTID HEALTH DIAGNOSTICS ==="
+#     echo "Date: $(date -Is)"
+#     echo ""
+#     echo "--- pct status ---"
+#     pct status "$CTID" 2>&1 || true
+#     echo "--- pct config ---"
+#     pct config "$CTID" 2>&1 || true
+#     echo "--- container log tail ---"
+#     tail -50 "/var/log/lxc/${CTID}/${CTID}.log" 2>/dev/null || true
+#     echo "--- container filesystem check ---"
+#     pct exec "$CTID" -- df -h 2>/dev/null || true
+#     echo "--- container services ---"
+#     pct exec "$CTID" -- systemctl --failed --no-pager 2>/dev/null || true
+#     echo "=== END CT HEALTH DIAGNOSTICS ==="
+# } >> "$HOOK_LOG_FILE"
+
+# --- Example: Attempt automatic remediation (restart container) ---
+# echo "[health-check-failed] Attempting container restart..."
+# pct stop "$CTID" 2>/dev/null || true
+# sleep 3
+# pct start "$CTID" 2>/dev/null || true
+# sleep 5
+# CT_STATUS=$(pct status "$CTID" 2>/dev/null | awk '{print $2}')
+# if [[ "$CT_STATUS" == "running" ]]; then
+#     echo "[health-check-failed] Container restarted successfully."
+# else
+#     echo "[health-check-failed] Container restart failed. Manual intervention required."
+# fi
+
+# --- Example: Tag container for manual review ---
+# pct set "$CTID" --description "⚠️ NEEDS REVIEW - Health check failed after conversion from VM $VMID" || true
+# pct set "$CTID" --tags "needs-review,converted" 2>/dev/null || true
+
+exit 0

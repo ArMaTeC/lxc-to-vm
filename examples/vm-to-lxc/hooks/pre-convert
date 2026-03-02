@@ -1,0 +1,45 @@
+#!/bin/bash
+# ==============================================================================
+# vm-to-lxc.sh — Example Hook: pre-convert
+# ==============================================================================
+# Runs BEFORE the conversion process starts.
+# Use this for notifications, backups, or pre-flight preparations.
+#
+# Arguments:
+#   $1 = Source VM ID (VMID)
+#   $2 = Target Container ID (CTID)
+#
+# Environment variables available:
+#   HOOK_VMID      — Source VM ID
+#   HOOK_CTID      — Target container ID
+#   HOOK_LOG_FILE  — Path to conversion log file
+#   HOOK_STAGE     — Hook stage name (pre-convert)
+# ==============================================================================
+
+VMID="${1:-$HOOK_VMID}"
+CTID="${2:-$HOOK_CTID}"
+
+echo "[pre-convert] Starting conversion: VM $VMID → CT $CTID"
+echo "[pre-convert] Timestamp: $(date -Is)"
+
+# --- Example: Send notification ---
+# curl -s -X POST "https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+#     -H 'Content-Type: application/json' \
+#     -d "{\"text\":\"Starting VM-to-LXC conversion: VM $VMID → CT $CTID\"}" || true
+
+# --- Example: Create an external backup of VM config ---
+# mkdir -p /var/backups/vm-configs
+# qm config "$VMID" > "/var/backups/vm-configs/vm-${VMID}-$(date +%Y%m%d).conf" 2>/dev/null || true
+
+# --- Example: Record start time for metrics ---
+# echo "$(date +%s)" > "/tmp/vm-to-lxc-start-${VMID}.ts"
+
+# --- Example: Verify VM is stopped for consistent copy ---
+# VM_STATUS=$(qm status "$VMID" 2>/dev/null | awk '{print $2}')
+# if [[ "$VM_STATUS" == "running" ]]; then
+#     echo "[pre-convert] WARNING: VM $VMID is still running. Stopping for consistent copy..."
+#     qm stop "$VMID" || true
+#     sleep 3
+# fi
+
+exit 0

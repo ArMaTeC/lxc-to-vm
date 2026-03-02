@@ -1,0 +1,59 @@
+#!/bin/bash
+# ==============================================================================
+# vm-to-lxc.sh — Example Hook: post-convert
+# ==============================================================================
+# Runs AFTER a successful container creation from a VM.
+# Use this for post-setup tasks like starting services, registering in inventory,
+# or applying custom container settings.
+#
+# Arguments:
+#   $1 = Source VM ID (VMID)
+#   $2 = Target Container ID (CTID)
+#
+# Environment variables available:
+#   HOOK_VMID      — Source VM ID
+#   HOOK_CTID      — Target container ID
+#   HOOK_LOG_FILE  — Path to conversion log file
+#   HOOK_STAGE     — Hook stage name (post-convert)
+# ==============================================================================
+
+VMID="${1:-$HOOK_VMID}"
+CTID="${2:-$HOOK_CTID}"
+
+echo "[post-convert] Conversion complete: VM $VMID → CT $CTID"
+echo "[post-convert] Timestamp: $(date -Is)"
+
+# --- Example: Start the container ---
+# pct start "$CTID" || true
+
+# --- Example: Register in external inventory (e.g., Ansible, CMDB) ---
+# curl -s -X POST "https://inventory.example.com/api/containers" \
+#     -H 'Content-Type: application/json' \
+#     -d "{\"ctid\":$CTID,\"source_vmid\":$VMID,\"node\":\"$(hostname)\"}" || true
+
+# --- Example: Apply custom container settings ---
+# pct set "$CTID" --features nesting=1 || true
+# pct set "$CTID" --onboot 1 || true
+
+# --- Example: Add to monitoring ---
+# curl -s "https://monitoring.example.com/api/hosts" \
+#     -d "hostname=ct-${CTID}&type=lxc&parent_vm=${VMID}" || true
+
+# --- Example: Set container description/notes ---
+# pct set "$CTID" --description "Converted from VM $VMID on $(date +%Y-%m-%d) by vm-to-lxc.sh" || true
+
+# --- Example: Create firewall rules ---
+# cat > "/etc/pve/firewall/${CTID}.fw" <<EOF
+# [RULES]
+# IN ACCEPT -source 10.0.0.0/8 -p tcp -dport 22
+# IN ACCEPT -source 10.0.0.0/8 -p tcp -dport 80
+# IN ACCEPT -source 10.0.0.0/8 -p tcp -dport 443
+# EOF
+
+# --- Example: Record conversion metrics ---
+# START_TS=$(cat "/tmp/vm-to-lxc-start-${VMID}.ts" 2>/dev/null || echo 0)
+# END_TS=$(date +%s)
+# DURATION=$((END_TS - START_TS))
+# echo "[post-convert] Conversion took ${DURATION}s" >> "$HOOK_LOG_FILE"
+
+exit 0

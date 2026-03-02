@@ -1,0 +1,31 @@
+# ==============================================================================
+# vm-to-lxc.sh — Example Batch Conversions File
+# ==============================================================================
+#
+# Format: VMID CTID [STORAGE] [DISK_SIZE_GB]
+#
+# Lines starting with # are comments and ignored.
+# Empty lines are ignored.
+#
+# Usage:
+#   sudo ./vm-to-lxc.sh --batch examples-vm-to-lxc/batch-conversions.txt
+#   sudo ./vm-to-lxc.sh --batch examples-vm-to-lxc/batch-conversions.txt --parallel 4
+#
+# Notes:
+#   - Storage and disk size from CLI args apply to all entries if not specified per-line
+#   - Each conversion is independent; failures don't stop the batch
+# ==============================================================================
+
+# Simple VMID → CTID pairs (uses CLI --storage and --disk-size)
+200 100
+201 101
+205 105
+
+# Web servers cluster
+# 210 110
+# 211 111
+# 212 112
+
+# Database servers
+# 220 120
+# 221 121
