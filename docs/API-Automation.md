@@ -45,7 +45,7 @@ pveum user token add root@pam converter --privsep=0
 ### Required Privileges
 
 | Privilege | Purpose |
-|-----------|---------|
+| --------- | ------- |
 | `VM.Audit` | Read VM configuration |
 | `VM.Config.Disk` | Modify VM disks |
 | `VM.PowerMgmt` | Start/stop VMs |
@@ -90,7 +90,7 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm \
 ### API Arguments
 
 | Argument | Description | Example |
-|----------|-------------|---------|
+| -------- | ----------- | ------- |
 | `--api-host` | Proxmox API hostname | `proxmox.example.com` |
 | `--api-token` | API token string | `user@realm!tokenid=uuid` |
 | `--api-user` | API user (optional) | `root@pam` |
