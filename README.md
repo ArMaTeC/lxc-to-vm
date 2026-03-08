@@ -71,6 +71,16 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --start
 sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --snapshot --start
 ```
 
+### Shrink LXC (Standalone)
+
+```bash
+# Optimize container before manual operations
+sudo ./shrink-lxc.sh -c 100
+
+# Shrink with filesystem resize
+sudo ./shrink-lxc.sh -c 100 --resize
+```
+
 ---
 
 ## 📚 Documentation
