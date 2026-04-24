@@ -524,14 +524,13 @@ CT_WAS_RUNNING=false
 if [[ "$CT_STATUS" == "running" ]]; then
     CT_WAS_RUNNING=true
     # Check if hot-expand is supported for this storage type
-    local hot_expand_supported=false
+    hot_expand_supported=false
     case "$STORAGE_TYPE" in
         lvmthin|lvm|zfspool)
             hot_expand_supported=true
             ;;
         dir)
             # Raw images support hot-expand, qcow2 requires restart
-            local disk_path img_format
             disk_path=$(pvesm path "$ROOTFS_VOL" 2>/dev/null)
             if [[ -f "$disk_path" ]]; then
                 img_format=$(qemu-img info "$disk_path" 2>/dev/null | awk '/file format:/{print $3}')
