@@ -17,7 +17,8 @@
 - **🔄 Bidirectional Conversion** - LXC ↔ VM and VM ↔ LXC
 - **🐧 Multi-Distro Support** - Debian, Ubuntu, Alpine, RHEL/CentOS/Rocky, Arch Linux
 - **📉 Smart Disk Shrinking** - Optimize disk size before conversion
-- **🛡️ Snapshot Safety** - Automatic rollback on failure
+- **� Flexible Disk Expansion** - Grow containers with multiple expansion modes
+- **�🛡️ Snapshot Safety** - Automatic rollback on failure
 - **📊 Batch Processing** - Convert multiple workloads at once
 - **🔌 Hook System** - Custom automation at every stage
 - **🧙 Interactive Wizard** - TUI mode for guided conversion
@@ -34,7 +35,8 @@
 curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh -o vm-to-lxc.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh -o shrink-lxc.sh \
-  && chmod +x lxc-to-vm.sh vm-to-lxc.sh shrink-lxc.sh
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-lxc.sh -o expand-lxc.sh \
+  && chmod +x lxc-to-vm.sh vm-to-lxc.sh shrink-lxc.sh expand-lxc.sh
 ```
 
 Or clone the repository:
@@ -56,6 +58,22 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --start
 
 # Shrink + Convert
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
+```
+
+### Expand LXC (Standalone)
+
+```bash
+# Expand to specific size
+sudo ./expand-lxc.sh -c 100 -s 100
+
+# Add space to current size
+sudo ./expand-lxc.sh -c 100 -a 50
+
+# Use maximum available space
+sudo ./expand-lxc.sh -c 100 --max
+
+# Hot-expand without restart (LVM/ZFS supported)
+sudo ./expand-lxc.sh -c 100 -s 200 --no-restart
 ```
 
 ### VM to LXC
@@ -92,6 +110,7 @@ sudo ./shrink-lxc.sh -c 100 --help
 | **[lxc-to-vm.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/lxc-to-vm)** | Complete LXC to VM documentation |
 | **[vm-to-lxc.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/vm-to-lxc)** | Complete VM to LXC documentation |
 | **[shrink-lxc.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/shrink-lxc)** | Container optimization guide |
+| **[expand-lxc.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/expand-lxc)** | Container expansion guide |
 | **[Hooks](https://github.com/ArMaTeC/lxc-to-vm/wiki/Hooks)** | Automation hook system |
 | **[Troubleshooting](https://github.com/ArMaTeC/lxc-to-vm/wiki/Troubleshooting)** | Common issues and solutions |
 | **[API & Automation](https://github.com/ArMaTeC/lxc-to-vm/wiki/API-Automation)** | CI/CD integration examples |
@@ -127,6 +146,7 @@ lxc-to-vm/
 ├── lxc-to-vm.sh          # LXC to VM converter
 ├── vm-to-lxc.sh          # VM to LXC converter
 ├── shrink-lxc.sh         # Container optimizer
+├── expand-lxc.sh         # Container expansion tool
 ├── examples/             # Hook examples for lxc-to-vm
 ├── examples-vm-to-lxc/   # Hook examples for vm-to-lxc
 ├── docs/                 # Wiki source files
