@@ -120,7 +120,6 @@ sudo ./shrink-vm.sh -v 100 --dry-run
 
 ### Expand VM (Standalone)
 
-
 ```bash
 # Expand VM to specific size
 sudo ./expand-vm.sh -v 100 -s 100
