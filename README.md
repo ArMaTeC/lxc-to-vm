@@ -38,7 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-lxc.sh -o expand-lxc.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh -o shrink-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh -o expand-vm.sh \
-  && chmod +x lxc-to-vm.sh vm-to-lxc.sh shrink-lxc.sh expand-lxc.sh shrink-vm.sh expand-vm.sh
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh -o clone-replace-disk.sh \
+  && chmod +x lxc-to-vm.sh vm-to-lxc.sh shrink-lxc.sh expand-lxc.sh shrink-vm.sh expand-vm.sh clone-replace-disk.sh
 ```
 
 Or clone the repository:
@@ -133,6 +134,25 @@ sudo ./expand-vm.sh -v 100 --max
 sudo ./expand-vm.sh -v 100 -s 200 --hot-expand
 ```
 
+### Clone & Replace Disk (Fix Expansion Issues)
+
+```bash
+# Fix: Proxmox shows expanded size but OS doesn't see it
+sudo ./clone-replace-disk.sh -t lxc -i 133 --size 200
+
+# Clone VM disk with expansion
+sudo ./clone-replace-disk.sh -t vm -i 100 -d scsi0 --size 300
+
+# Clone to different storage backend
+sudo ./clone-replace-disk.sh -t lxc -i 100 -s zfspool --size 200
+
+# Clone, replace, and remove old disk
+sudo ./clone-replace-disk.sh -t vm -i 200 --size 250 --remove-old
+
+# Preview changes
+sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
+```
+
 ---
 
 ## 📚 Documentation
@@ -147,6 +167,7 @@ sudo ./expand-vm.sh -v 100 -s 200 --hot-expand
 | **[expand-lxc.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/expand-lxc)** | Container expansion guide |
 | **[shrink-vm.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/shrink-vm)** | VM disk shrink guide |
 | **[expand-vm.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/expand-vm)** | VM disk expansion guide |
+| **[clone-replace-disk.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/clone-replace-disk)** | Disk clone & replace tool |
 | **[Hooks](https://github.com/ArMaTeC/lxc-to-vm/wiki/Hooks)** | Automation hook system |
 | **[Troubleshooting](https://github.com/ArMaTeC/lxc-to-vm/wiki/Troubleshooting)** | Common issues and solutions |
 | **[API & Automation](https://github.com/ArMaTeC/lxc-to-vm/wiki/API-Automation)** | CI/CD integration examples |
@@ -185,6 +206,7 @@ lxc-to-vm/
 ├── expand-lxc.sh         # Container expansion tool
 ├── shrink-vm.sh          # VM disk shrinker
 ├── expand-vm.sh          # VM disk expander
+├── clone-replace-disk.sh # Disk clone & replace tool
 ├── examples/             # Hook examples for lxc-to-vm
 ├── examples-vm-to-lxc/   # Hook examples for vm-to-lxc
 ├── docs/                 # Wiki source files
