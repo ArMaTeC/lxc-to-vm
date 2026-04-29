@@ -74,11 +74,16 @@ The scripts automatically install required packages:
 ### One-Liner Download
 
 ```bash
-# Download all scripts to current directory
-curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
+# Download all scripts into ~/lxc-to-vm
+mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh -o vm-to-lxc.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh -o shrink-lxc.sh \
-  && chmod +x lxc-to-vm.sh vm-to-lxc.sh shrink-lxc.sh
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-lxc.sh -o expand-lxc.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh -o shrink-vm.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh -o expand-vm.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh -o clone-replace-disk.sh \
+  && chmod +x *.sh
 ```
 
 ### Git Clone
@@ -98,16 +103,20 @@ chmod +x *.sh
 
 ```bash
 # Create installation directory
-mkdir -p ~/proxmox-tools
-cd ~/proxmox-tools
+mkdir -p ~/lxc-to-vm
+cd ~/lxc-to-vm
 
 # Download each script
 curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
 curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh
 curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh
+curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-lxc.sh
+curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh
+curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh
+curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh
 
 # Make executable
-chmod +x lxc-to-vm.sh vm-to-lxc.sh shrink-lxc.sh
+chmod +x *.sh
 ```
 
 ### Step 2: Install Dependencies
@@ -126,10 +135,15 @@ modprobe nbd max_part=8
 ### Step 3: Verify Installation
 
 ```bash
-# Check script versions
+# From ~/lxc-to-vm
+cd ~/lxc-to-vm
 ./lxc-to-vm.sh --version
 ./vm-to-lxc.sh --version
 ./shrink-lxc.sh --version
+./expand-lxc.sh --version
+./shrink-vm.sh --version
+./expand-vm.sh --version
+./clone-replace-disk.sh --version
 ```
 
 ---
@@ -143,7 +157,13 @@ For production environments, install system-wide:
 cp lxc-to-vm.sh /usr/local/bin/lxc-to-vm
 cp vm-to-lxc.sh /usr/local/bin/vm-to-lxc
 cp shrink-lxc.sh /usr/local/bin/shrink-lxc
-chmod +x /usr/local/bin/lxc-to-vm /usr/local/bin/vm-to-lxc /usr/local/bin/shrink-lxc
+cp expand-lxc.sh /usr/local/bin/expand-lxc
+cp shrink-vm.sh /usr/local/bin/shrink-vm
+cp expand-vm.sh /usr/local/bin/expand-vm
+cp clone-replace-disk.sh /usr/local/bin/clone-replace-disk
+chmod +x /usr/local/bin/lxc-to-vm /usr/local/bin/vm-to-lxc /usr/local/bin/shrink-lxc \
+  /usr/local/bin/expand-lxc /usr/local/bin/shrink-vm /usr/local/bin/expand-vm \
+  /usr/local/bin/clone-replace-disk
 
 # Create hook directories
 mkdir -p /var/lib/lxc-to-vm/hooks /var/lib/lxc-to-vm/profiles /var/lib/lxc-to-vm/resume
@@ -202,11 +222,14 @@ pvesm path local-lvm
 Test without making changes:
 
 ```bash
+# From ~/lxc-to-vm (or use system-wide names after system-wide install)
+cd ~/lxc-to-vm
+
 # LXC to VM dry-run
-sudo lxc-to-vm -c 100 -v 200 -s local-lvm --dry-run
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --dry-run
 
 # VM to LXC dry-run
-sudo vm-to-lxc -v 200 -c 100 -s local-lvm --dry-run
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --dry-run
 ```
 
 ---
@@ -216,18 +239,26 @@ sudo vm-to-lxc -v 200 -c 100 -s local-lvm --dry-run
 ### Check Script Health
 
 ```bash
-# Verify all scripts are present
-which lxc-to-vm vm-to-lxc shrink-lxc
+# Verify all scripts are present (system-wide install)
+which lxc-to-vm vm-to-lxc shrink-lxc expand-lxc shrink-vm expand-vm clone-replace-disk
 
 # Check versions
-lxc-to-vm --version  # Should show 6.0.6
-vm-to-lxc --version  # Should show 6.0.6
-shrink-lxc --version # Should show 6.0.6
+lxc-to-vm --version         # Should show 6.0.6
+vm-to-lxc --version         # Should show 6.0.6
+shrink-lxc --version        # Should show 6.0.6
+expand-lxc --version        # Should show 6.0.0
+shrink-vm --version         # Should show 6.0.0
+expand-vm --version         # Should show 6.0.0
+clone-replace-disk --version # Should show 1.0.0
 
 # Test help output
 lxc-to-vm --help
 vm-to-lxc --help
 shrink-lxc --help
+expand-lxc --help
+shrink-vm --help
+expand-vm --help
+clone-replace-disk --help
 ```
 
 ### Verify Dependencies
@@ -251,7 +282,9 @@ lsmod | grep nbd
 
 ```bash
 # Remove binaries
-rm -f /usr/local/bin/lxc-to-vm /usr/local/bin/vm-to-lxc /usr/local/bin/shrink-lxc
+rm -f /usr/local/bin/lxc-to-vm /usr/local/bin/vm-to-lxc /usr/local/bin/shrink-lxc \
+  /usr/local/bin/expand-lxc /usr/local/bin/shrink-vm /usr/local/bin/expand-vm \
+  /usr/local/bin/clone-replace-disk
 
 # Remove hook directories (back up first if needed)
 rm -rf /var/lib/lxc-to-vm /var/lib/vm-to-lxc
@@ -266,11 +299,8 @@ crontab -l | grep -v "lxc-to-vm\|vm-to-lxc" | crontab -
 ### Remove Local Installation
 
 ```bash
-# Remove from home directory
-rm -f ~/proxmox-tools/lxc-to-vm.sh ~/proxmox-tools/vm-to-lxc.sh ~/proxmox-tools/shrink-lxc.sh
-
-# Or remove entire directory
-rm -rf ~/proxmox-tools
+# Remove the lxc-to-vm folder
+rm -rf ~/lxc-to-vm
 ```
 
 ---
@@ -279,5 +309,9 @@ rm -rf ~/proxmox-tools
 
 - **[lxc-to-vm.sh Usage](lxc-to-vm)** - Learn LXC to VM conversion
 - **[vm-to-lxc.sh Usage](vm-to-lxc)** - Learn VM to LXC conversion
-- **[shrink-lxc.sh Usage](shrink-lxc)** - Optimize containers
+- **[shrink-lxc.sh Usage](shrink-lxc)** - Optimize LXC containers
+- **[expand-lxc.sh Usage](expand-lxc)** - Expand LXC container disks
+- **[shrink-vm.sh Usage](shrink-vm)** - Shrink VM disks
+- **[expand-vm.sh Usage](expand-vm)** - Expand VM disks
+- **[clone-replace-disk.sh Usage](clone-replace-disk)** - Clone and replace disks
 - **[Examples](Examples)** - See real-world use cases
