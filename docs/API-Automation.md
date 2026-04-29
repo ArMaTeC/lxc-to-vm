@@ -17,11 +17,23 @@ Guide for programmatic control and automation of conversions using the Proxmox V
 
 ## Overview
 
-All three scripts support Proxmox VE API integration for:
+All scripts support Proxmox VE API integration and automation for:
 
 - **Cluster Operations** - Migrate containers/VMs between nodes before conversion
-- **Remote Execution** - Trigger conversions from external systems
-- **Automation** - Schedule batch conversions, integrate with CI/CD
+- **Remote Execution** - Trigger conversions and disk operations from external systems
+- **Automation** - Schedule batch conversions and disk management, integrate with CI/CD
+
+The full suite of scripts available for automation:
+
+| Script | Purpose |
+| ------ | ------- |
+| `lxc-to-vm.sh` | Convert LXC containers to KVM VMs |
+| `vm-to-lxc.sh` | Convert KVM VMs to LXC containers |
+| `shrink-lxc.sh` | Shrink LXC container disk to actual usage |
+| `expand-lxc.sh` | Expand LXC container disk |
+| `shrink-vm.sh` | Shrink VM disk to actual usage |
+| `expand-vm.sh` | Expand VM disk |
+| `clone-replace-disk.sh` | Clone and replace VM/LXC disks |
 
 ---
 
@@ -289,11 +301,80 @@ else
 fi
 ```
 
+### Shrink + Convert Pipeline
+
+Automate the shrink-before-convert workflow:
+
+```bash
+#!/bin/bash
+# shrink-and-convert.sh
+
+CTID=100
+VMID=200
+STORAGE="local-lvm"
+
+echo "Shrinking CT $CTID..."
+sudo ./shrink-lxc.sh -c $CTID --force
+
+echo "Converting CT $CTID to VM $VMID..."
+sudo ./lxc-to-vm.sh -c $CTID -v $VMID -s $STORAGE --start
+
+echo "Done: CT $CTID → VM $VMID"
+```
+
+### Bulk VM Disk Expansion
+
+```bash
+#!/bin/bash
+# expand-all-vms.sh - Add 20GB to a list of VMs
+
+VMIDS=(100 101 102 103)
+
+for VMID in "${VMIDS[@]}"; do
+    echo "Expanding VM $VMID by 20GB..."
+    sudo ./expand-vm.sh -v $VMID -a 20 --force
+done
+```
+
+### Automated Disk Shrink Before Migration
+
+```bash
+#!/bin/bash
+# shrink-vm-for-migration.sh
+
+VMID=200
+
+echo "Shrinking VM $VMID..."
+sudo ./shrink-vm.sh -v $VMID --force
+
+echo "Current disk after shrink:"
+qm config $VMID | grep -E '^(scsi|virtio|ide)0'
+```
+
+### Disk Clone and Replace (CI/CD fix step)
+
+```bash
+#!/bin/bash
+# fix-guest-disk-size.sh
+
+TYPE="lxc"   # or "vm"
+ID=100
+NEW_SIZE=200
+
+echo "Cloning and replacing disk for $TYPE $ID to ${NEW_SIZE}GB..."
+sudo ./clone-replace-disk.sh -t $TYPE -i $ID --size $NEW_SIZE --force
+```
+
 ---
 
 ## Related Documentation
 
 - **[lxc-to-vm.sh](lxc-to-vm)** - LXC to VM guide
 - **[vm-to-lxc.sh](vm-to-lxc)** - VM to LXC guide
+- **[shrink-lxc.sh](shrink-lxc)** - Shrink LXC disks
+- **[expand-lxc.sh](expand-lxc)** - Expand LXC disks
+- **[shrink-vm.sh](shrink-vm)** - Shrink VM disks
+- **[expand-vm.sh](expand-vm)** - Expand VM disks
+- **[clone-replace-disk.sh](clone-replace-disk)** - Clone and replace disks
 - **[Hooks](Hooks)** - Automation hooks
 - **[Examples](Examples)** - More automation examples

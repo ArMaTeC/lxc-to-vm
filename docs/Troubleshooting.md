@@ -9,11 +9,15 @@ Common issues and solutions for the Proxmox LXC ↔️ VM Converter suite.
 1. [General Issues](#general-issues)
 2. [lxc-to-vm.sh Issues](#lxc-to-vmsh-issues)
 3. [vm-to-lxc.sh Issues](#vm-to-lxcsh-issues)
-4. [Network Issues](#network-issues)
-5. [Disk/Storage Issues](#diskstorage-issues)
-6. [Permission Issues](#permission-issues)
-7. [Debug Mode](#debug-mode)
-8. [Getting Help](#getting-help)
+4. [expand-lxc.sh Issues](#expand-lxcsh-issues)
+5. [expand-vm.sh Issues](#expand-vmsh-issues)
+6. [shrink-vm.sh Issues](#shrink-vmsh-issues)
+7. [clone-replace-disk.sh Issues](#clone-replace-disksh-issues)
+8. [Network Issues](#network-issues)
+9. [Disk/Storage Issues](#diskstorage-issues)
+10. [Permission Issues](#permission-issues)
+11. [Debug Mode](#debug-mode)
+12. [Getting Help](#getting-help)
 
 ---
 
@@ -326,6 +330,227 @@ echo "nbd" >> /etc/modules
 
 ---
 
+## expand-lxc.sh Issues
+
+### Container size did not change after expansion
+
+**Symptoms:** `expand-lxc.sh` reports success but `df -h` inside the container shows old size.
+
+**Diagnosis:**
+
+```bash
+# Check the rootfs config
+pct config <CTID> | grep rootfs
+
+# Check actual LV/volume size
+pvesm path <storage>:<volume>
+```
+
+**Solutions:**
+
+1. **Filesystem not resized (QCOW2 without qemu-nbd):**
+
+```bash
+# Install qemu-utils for qemu-nbd support
+apt install qemu-utils
+
+# Then re-run expansion
+sudo ./expand-lxc.sh -c 100 -s 100
+```
+
+1. **Use clone-replace-disk for a fresh expansion:**
+
+```bash
+sudo ./clone-replace-disk.sh -t lxc -i 100 --size 100
+```
+
+### Insufficient pool space
+
+**Symptoms:** `E_NO_SPACE` error or LVM/ZFS resize failure.
+
+**Diagnosis:**
+
+```bash
+pvesm status
+vgs        # For LVM
+zpool list # For ZFS
+```
+
+**Solution:** Use `--max` mode with a safety margin, or free space in the pool first.
+
+### Hot-expand: container reports old size after --no-restart
+
+**Symptoms:** `--no-restart` used but filesystem not growing.
+
+**Solution:** The filesystem resize happens inside the container. After hot-expand completes, verify:
+
+```bash
+pct exec <CTID> -- resize2fs /dev/sda2
+pct exec <CTID> -- df -h /
+```
+
+---
+
+## expand-vm.sh Issues
+
+### VM filesystem not showing new size after expansion
+
+**Symptoms:** `expand-vm.sh` completes but `df -h` inside VM shows old size.
+
+**Explanation:** `expand-vm.sh` expands the disk at the Proxmox/storage level. The filesystem inside the VM must be resized manually (or the OS must support auto-grow via cloud-init/growpart).
+
+**Solution:**
+
+```bash
+# Inside the VM
+growpart /dev/sda 1         # Expand the partition
+resize2fs /dev/sda1         # Resize ext4 filesystem
+# For XFS:
+xfs_growfs /                # Resize XFS filesystem
+```
+
+### Hot-expand not working (--hot-expand)
+
+**Symptoms:** QEMU monitor command fails or VM doesn't see new size.
+
+**Diagnosis:**
+
+```bash
+# Check qemu-guest-agent is running inside VM
+qm agent <VMID> ping
+
+# View expand-vm log
+tail -50 /var/log/expand-vm.log
+```
+
+**Solutions:**
+
+1. **Without hot-expand (safer):** Stop VM, expand, restart:
+
+```bash
+sudo ./expand-vm.sh -v 100 -s 200
+```
+
+1. **Ensure QEMU guest agent is installed** inside the VM:
+
+```bash
+# Debian/Ubuntu
+apt install qemu-guest-agent
+systemctl enable --now qemu-guest-agent
+```
+
+---
+
+## shrink-vm.sh Issues
+
+### Filesystem shrink failed
+
+**Symptoms:** `resize2fs` error, or `Filesystem shrink failed` message.
+
+**Diagnosis:**
+
+```bash
+tail -80 /var/log/shrink-vm.log
+```
+
+**Solutions:**
+
+1. **Increase headroom:**
+
+```bash
+sudo ./shrink-vm.sh -v 100 -g 10
+```
+
+1. **Use libguestfs for safer shrink:**
+
+```bash
+apt install libguestfs-tools
+sudo ./shrink-vm.sh -v 100 -u
+```
+
+1. **Run filesystem check manually first:**
+
+```bash
+# Mount disk and run e2fsck
+qm stop 100
+# Identify disk path
+qm config 100 | grep -E '^(scsi|virtio|ide)0'
+pvesm path local-lvm:vm-100-disk-0
+e2fsck -f -y /dev/pve/vm-100-disk-0
+```
+
+### Shrink reports disk is already optimal
+
+**Symptoms:** `Disk is already optimal size. No shrink needed.`
+
+This is not an error — the calculated target (usage + margin + headroom) is already equal to or larger than the current disk. Reduce headroom or free space inside the VM first.
+
+### Usage detection returned 50% estimate
+
+**Symptoms:** Warning: `Could not determine actual usage. Estimating X GB (50% of current).`
+
+**Solution:** Install `libguestfs-tools` for accurate measurement:
+
+```bash
+apt install libguestfs-tools
+sudo ./shrink-vm.sh -v 100
+```
+
+---
+
+## clone-replace-disk.sh Issues
+
+### Clone failed: LVM volume creation error
+
+**Symptoms:** `Failed to create LVM volume` or `lvcreate` error.
+
+**Diagnosis:**
+
+```bash
+vgs   # Check VG free space
+lvs   # List existing volumes
+```
+
+**Solution:** Free space in the VG or target a different storage with more space:
+
+```bash
+sudo ./clone-replace-disk.sh -t lxc -i 100 -s other-storage --size 200
+```
+
+### Old disk not removed after --remove-old
+
+**Symptoms:** Script reports old disk removed, but `pvesm status` still shows it.
+
+**Solution:** Remove manually using `pvesm free`:
+
+```bash
+pvesm free local-lvm:vm-100-disk-0
+```
+
+### VM/Container won't start after disk replace
+
+**Symptoms:** VM/container fails to start with new disk.
+
+**Diagnosis:**
+
+```bash
+# Check new disk is attached
+qm config <VMID> | grep -E '^(scsi|virtio|ide)0'
+pct config <CTID> | grep rootfs
+```
+
+**Recovery:** Roll back to old disk (kept by default):
+
+```bash
+# For VM
+qm set <VMID> --scsi0 <old-disk-ref>,size=<N>G
+
+# For LXC
+pct set <CTID> --rootfs <old-disk-ref>,size=<N>G
+```
+
+---
+
 ## Network Issues
 
 ### Bridge Not Found
@@ -453,24 +678,45 @@ chown root:root /var/lib/lxc-to-vm/hooks/*
 
 ## Debug Mode
 
-Enable verbose debugging:
+Each script has a dedicated debug environment variable and log file:
+
+| Script | Debug Variable | Log File |
+| ------ | -------------- | -------- |
+| `lxc-to-vm.sh` | `DEBUG=1` | `/var/log/lxc-to-vm.log` |
+| `vm-to-lxc.sh` | `DEBUG=1` | `/var/log/vm-to-lxc.log` |
+| `shrink-lxc.sh` | `SHRINK_LXC_DEBUG=1` | `/var/log/shrink-lxc.log` |
+| `expand-lxc.sh` | `EXPAND_LXC_DEBUG=1` | `/var/log/expand-lxc.log` |
+| `shrink-vm.sh` | `SHRINK_VM_DEBUG=1` | `/var/log/shrink-vm.log` |
+| `expand-vm.sh` | `EXPAND_VM_DEBUG=1` | `/var/log/expand-vm.log` |
+| `clone-replace-disk.sh` | `CLONE_REPLACE_DEBUG=1` | `/var/log/clone-replace-disk.log` |
+
+### Enable debug for a specific script
 
 ```bash
-# Set debug flag
-export DEBUG=1
+# lxc-to-vm
+DEBUG=1 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm
 
-# Run script
-sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm
+# expand-lxc
+EXPAND_LXC_DEBUG=1 sudo ./expand-lxc.sh -c 100 -a 20
+
+# shrink-vm
+SHRINK_VM_DEBUG=1 sudo ./shrink-vm.sh -v 100
+
+# expand-vm
+EXPAND_VM_DEBUG=1 sudo ./expand-vm.sh -v 100 -s 200
+
+# clone-replace-disk
+CLONE_REPLACE_DEBUG=1 sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200
 ```
 
-Or check logs:
+### View logs in real time
 
 ```bash
-# View conversion log
 tail -f /var/log/lxc-to-vm.log
-
-# View vm-to-lxc log
-tail -f /var/log/vm-to-lxc.log
+tail -f /var/log/expand-lxc.log
+tail -f /var/log/shrink-vm.log
+tail -f /var/log/expand-vm.log
+tail -f /var/log/clone-replace-disk.log
 ```
 
 ---
@@ -479,9 +725,9 @@ tail -f /var/log/vm-to-lxc.log
 
 If issues persist:
 
-1. **Check logs:** `/var/log/lxc-to-vm.log` or `/var/log/vm-to-lxc.log`
+1. **Check the relevant log file** (see [Debug Mode](#debug-mode) for full list)
 2. **Run with `--dry-run`:** Preview without making changes
-3. **Test with `--validate-only`:** Check pre-flight conditions
+3. **Test with `--validate-only`:** Check pre-flight conditions (lxc-to-vm / vm-to-lxc)
 4. **Create issue:** Report on GitHub with:
    - Script version (`--version`)
    - Proxmox version (`pveversion`)
@@ -494,4 +740,9 @@ If issues persist:
 
 - **[lxc-to-vm.sh](lxc-to-vm)** - LXC to VM guide
 - **[vm-to-lxc.sh](vm-to-lxc)** - VM to LXC guide
+- **[shrink-lxc.sh](shrink-lxc)** - Shrink LXC disks
+- **[expand-lxc.sh](expand-lxc)** - Expand LXC disks
+- **[shrink-vm.sh](shrink-vm)** - Shrink VM disks
+- **[expand-vm.sh](expand-vm)** - Expand VM disks
+- **[clone-replace-disk.sh](clone-replace-disk)** - Clone and replace disks
 - **[Installation](Installation)** - Setup guide

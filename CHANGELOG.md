@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.7] - 2025-06-01
+
+### Added (Disk Management Suite)
+
+- **`expand-lxc.sh`**: New script to expand LXC container root disk
+  - Expansion modes: absolute size (`-s`), add GB (`-a`), percent of pool (`--percent`), max available (`--max`)
+  - Hot-expand support (`--no-restart`) for LVM, LVM-thin, ZFS, and raw directory storage
+  - Safety margins for `--max` mode (`--safety-margin`, `--safety-percent`)
+  - Dry-run mode (`--dry-run`) for change preview
+  - Structured exit codes and mapped error messages
+  - Debug mode via `EXPAND_LXC_DEBUG=1`, log at `/var/log/expand-lxc.log`
+
+- **`expand-vm.sh`**: New script to expand VM primary disk
+  - Same expansion modes as `expand-lxc.sh`
+  - Hot-expand support (`--hot-expand`) via QEMU monitor (`block_resize`)
+  - Supports QCOW2 and raw image formats
+  - Dry-run mode (`--dry-run`) for change preview
+  - Structured exit codes and mapped error messages
+  - Debug mode via `EXPAND_VM_DEBUG=1`, log at `/var/log/expand-vm.log`
+
+- **`shrink-vm.sh`**: New script to shrink VM disk to actual usage
+  - Measures real data usage via `virt-df` (libguestfs) or `qemu-img`
+  - Optional `virt-resize` path (`-u`/`--use-libguestfs`) for complex layouts
+  - Configurable headroom (`-g`, default 2GB) and metadata margin (5%, min 512MB)
+  - Minimum disk size enforced (2GB)
+  - Dry-run mode (`--dry-run`) for change preview
+  - Supports LVM-thin, LVM, Directory (QCOW2/raw), ZFS
+  - Debug mode via `SHRINK_VM_DEBUG=1`, log at `/var/log/shrink-vm.log`
+
+- **`clone-replace-disk.sh`**: New script to clone and replace VM/LXC disks
+  - Supports both VM (`-t vm`) and LXC (`-t lxc`) targets
+  - Optional resize during clone (`--size`)
+  - Cross-storage cloning (e.g., LVM-thin → ZFS, Directory → LVM-thin)
+  - Format conversion during clone (`--format raw|qcow2`)
+  - Original disk kept by default; removed only with `--remove-old`
+  - Optional VM snapshot before operations (`--snapshot`)
+  - Automatic rollback of config on clone/replace failure
+  - Debug mode via `CLONE_REPLACE_DEBUG=1`, log at `/var/log/clone-replace-disk.log`
+
+### Added (Documentation)
+
+- `docs/expand-lxc.md` — Full reference guide for `expand-lxc.sh`
+- `docs/expand-vm.md` — Full reference guide for `expand-vm.sh`
+- `docs/shrink-vm.md` — Full reference guide for `shrink-vm.sh`
+- `docs/clone-replace-disk.md` — Full reference guide for `clone-replace-disk.sh`
+- Updated `docs/Home.md`, `docs/_Sidebar.md`, `docs/Installation.md` to cover all 7 scripts
+- Updated `docs/Troubleshooting.md` with sections for all new scripts and debug table
+- Updated `docs/API-Automation.md` with automation examples for disk management scripts
+
+---
+
 ## [6.0.6] - 2025-02-26
 
 ### Fixed (CentOS 7 Support)

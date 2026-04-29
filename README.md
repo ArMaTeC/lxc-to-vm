@@ -31,15 +31,16 @@
 ### Installation
 
 ```bash
-# Download all scripts
-curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
+# Download all scripts into ~/lxc-to-vm
+mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh -o vm-to-lxc.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-lxc.sh -o shrink-lxc.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-lxc.sh -o expand-lxc.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh -o shrink-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh -o expand-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh -o clone-replace-disk.sh \
-  && chmod +x lxc-to-vm.sh vm-to-lxc.sh shrink-lxc.sh expand-lxc.sh shrink-vm.sh expand-vm.sh clone-replace-disk.sh
+  && chmod +x *.sh
 ```
 
 Or clone the repository:
@@ -172,6 +173,8 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
 | **[Troubleshooting](https://github.com/ArMaTeC/lxc-to-vm/wiki/Troubleshooting)** | Common issues and solutions |
 | **[API & Automation](https://github.com/ArMaTeC/lxc-to-vm/wiki/API-Automation)** | CI/CD integration examples |
 | **[Examples](https://github.com/ArMaTeC/lxc-to-vm/wiki/Examples)** | Real-world use cases |
+| **[CHANGELOG](CHANGELOG.md)** | Version history and release notes |
+| **[CONTRIBUTING](CONTRIBUTING.md)** | How to contribute |
 
 ---
 
@@ -208,8 +211,10 @@ lxc-to-vm/
 ├── expand-vm.sh          # VM disk expander
 ├── clone-replace-disk.sh # Disk clone & replace tool
 ├── examples/             # Hook examples for lxc-to-vm
-├── examples-vm-to-lxc/   # Hook examples for vm-to-lxc
 ├── docs/                 # Wiki source files
+├── test-remote-pve.sh    # Automated remote PVE test helper
+├── CHANGELOG.md          # Version history
+├── CONTRIBUTING.md       # Contribution guidelines
 └── README.md             # This file
 ```
 
@@ -219,7 +224,9 @@ lxc-to-vm/
 
 - Check the **[Wiki Documentation](https://github.com/ArMaTeC/lxc-to-vm/wiki)**
 - Review **[Troubleshooting Guide](https://github.com/ArMaTeC/lxc-to-vm/wiki/Troubleshooting)**
-- View conversion logs: `/var/log/lxc-to-vm.log` or `/var/log/vm-to-lxc.log`
+- View script logs (all in `/var/log/`):
+  - `lxc-to-vm.log`, `vm-to-lxc.log`, `shrink-lxc.log`
+  - `expand-lxc.log`, `shrink-vm.log`, `expand-vm.log`, `clone-replace-disk.log`
 - [Open an Issue](https://github.com/ArMaTeC/lxc-to-vm/issues)
 
 ---
