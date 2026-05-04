@@ -820,7 +820,7 @@ do_conversion() {
         case "$DISTRO_ID" in
             debian|ubuntu|linuxmint|pop|kali|proxmox) DISTRO_FAMILY="debian" ;;
             alpine) DISTRO_FAMILY="alpine" ;;
-            centos|rhel|rocky|alma|fedora|ol) DISTRO_FAMILY="rhel" ;;
+            centos|rhel|rocky|almalinux|fedora|ol) DISTRO_FAMILY="rhel" ;;
             arch|manjaro|endeavouros) DISTRO_FAMILY="arch" ;;
             *) DISTRO_FAMILY="debian" ;;
         esac

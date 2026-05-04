@@ -1452,7 +1452,7 @@ run_preflight_validation() {
     pct unmount "$check_ctid" 2>/dev/null || true
 
     case "$detected_distro" in
-        debian|ubuntu|linuxmint|pop|kali|proxmox|alpine|centos|rhel|rocky|alma|fedora|ol|arch|manjaro|endeavouros)
+        debian|ubuntu|linuxmint|pop|kali|proxmox|alpine|centos|rhel|rocky|almalinux|fedora|ol|arch|manjaro|endeavouros)
             check_pass "Supported distro detected: $detected_distro"
             ;;
         unknown)
@@ -2404,7 +2404,7 @@ if [[ -f "$MOUNT_POINT/etc/os-release" ]]; then
     case "$DISTRO_ID" in
         debian|ubuntu|linuxmint|pop|kali|proxmox) DISTRO_FAMILY="debian" ;;
         alpine)                                    DISTRO_FAMILY="alpine" ;;
-        centos|rhel|rocky|alma|fedora|ol)          DISTRO_FAMILY="rhel"   ;;
+        centos|rhel|rocky|almalinux|fedora|ol)    DISTRO_FAMILY="rhel"   ;;
         arch|manjaro|endeavouros)                  DISTRO_FAMILY="arch"   ;;
         *)                                         DISTRO_FAMILY="debian" ;; # fallback
     esac
