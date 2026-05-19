@@ -22,7 +22,7 @@ We encourage security researchers and users to report any potential security vul
 1.  **Do NOT open a public GitHub issue.** This could expose the vulnerability to malicious actors before we have a chance to address it.
 2.  **Submit your report via our private security disclosure channel.**
     *   **Option 1 (Recommended): GitHub Security Advisories:** The preferred method is to use GitHub's private vulnerability reporting feature. You can find this option on our repository's "Security" tab.
-    *   **Option 2 (Alternative): Email:** If you are unable to use GitHub Security Advisories, please send an email to `security@example.com` (replace with your actual security email address).
+    *   **Option 2 (Alternative): Email:** If you are unable to use GitHub Security Advisories, please send an email to `armatec0@gmail.com` (replace with your actual security email address).
 3.  **Provide detailed information:** In your report, please include as much information as possible to help us understand and reproduce the vulnerability. This should ideally include:
     *   A clear description of the vulnerability.
     *   Steps to reproduce the vulnerability.
