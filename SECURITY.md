@@ -51,7 +51,7 @@ Upon receiving a vulnerability report, we will follow these steps:
 
 This security policy applies to the following:
 
-*   **Repository:** `[Your GitHub Repository URL, e.g., https://github.com/your-org/your-project]`
+*   **Repository:** `[Your GitHub Repository URL, e.g., [https://github.com/ArMaTeC/lxc-to-vm](https://github.com/ArMaTeC/lxc-to-vm)]`
 *   **Production Systems:** Any publicly accessible services or applications directly operated by us that are part of this project.
 
 Vulnerabilities found in third-party dependencies used by our project should ideally be reported to the respective maintainers of those dependencies. However, if you believe a vulnerability in a dependency has a direct and significant impact on our project, please report it to us, and we will assist in coordinating with the upstream project.
