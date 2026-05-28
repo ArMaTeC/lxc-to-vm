@@ -22,6 +22,7 @@
 
 - **🔄 Bidirectional Conversion** - LXC ↔ VM and VM ↔ LXC
 - **🐧 Multi-Distro Support** - Debian, Ubuntu, Alpine, RHEL/CentOS/Rocky, Arch Linux
+- **🪟 Windows VM Support** - Shrink, expand, and clone-replace Windows VM disks (NTFS)
 - **📉 Smart Disk Shrinking** - Optimize disk size before conversion
 - **� Flexible Disk Expansion** - Grow containers with multiple expansion modes
 - **�️ Snapshot Safety** - Automatic rollback on failure
@@ -203,6 +204,9 @@ sudo ./test-remote-pve.sh
 | **Alpine Linux** | ✅ | ✅ |
 | **RHEL/CentOS/Rocky** | ✅ | ✅ |
 | **Arch Linux** | ✅ | ✅ |
+| **Windows VM (Disk Ops)** | N/A | N/A |
+
+**Note**: Windows VMs are supported for disk shrink, expand, and clone-replace operations only. LXC containers are Linux-only by design.
 
 ---
 
@@ -230,6 +234,7 @@ lxc-to-vm/
 ├── test-remote-pve.sh    # Automated remote PVE test helper
 ├── test-remote-pve.ps1   # PowerShell remote PVE test helper
 ├── add-file-headers.sh   # File header automation tool
+├── lib/                  # Shared shell libraries (os-detect, windows-disk)
 ├── examples/             # Hook examples for lxc-to-vm
 ├── docs/                 # Wiki source files
 ├── CHANGELOG.md          # Version history

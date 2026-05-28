@@ -9,7 +9,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="6.0.0"
+readonly VERSION="6.1.0"
 readonly LOG_FILE="/var/log/expand-vm.log"
 
 # ==============================================================================
@@ -478,6 +478,7 @@ if $DRY_RUN; then
     e "  ${BOLD}Status:${NC}       $VM_STATUS"
     e "  ${BOLD}Storage:${NC}      $STORAGE_NAME ($STORAGE_TYPE)"
     e "  ${BOLD}Disk:${NC}         $DISK_NAME ($IMG_FORMAT)"
+    e "  ${BOLD}OS:${NC}           $OS_TYPE"
     e "  ${BOLD}Current:${NC}      ${CURRENT_SIZE_GB}GB"
     e "  ${BOLD}Target:${NC}       ${NEW_SIZE_GB}GB"
     e "  ${BOLD}Expansion:${NC}   +$((NEW_SIZE_GB - CURRENT_SIZE_GB))GB"

@@ -9,7 +9,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="1.0.0"
+readonly VERSION="1.1.0"
 readonly LOG_FILE="/var/log/clone-replace-disk.log"
 
 # ==============================================================================
@@ -405,6 +405,7 @@ if $DRY_RUN; then
     e "  ${BOLD}Source:${NC}       $DISK_REF (${CURRENT_SIZE_GB}GB, $SOURCE_FORMAT)"
     e "  ${BOLD}Target:${NC}       $TARGET_REF (${TARGET_SIZE}GB, $TARGET_FORMAT)"
     [[ -n "${DISK_NAME:-}" ]] && e "  ${BOLD}VM Disk:${NC}       $DISK_NAME"
+    [[ "$TYPE" == "vm" ]] && e "  ${BOLD}OS:${NC}           $OS_TYPE"
     echo ""
     e "  ${BOLD}Steps:${NC}"
     $WAS_RUNNING && echo "    1. Stop $TYPE $ID"

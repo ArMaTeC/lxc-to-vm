@@ -9,7 +9,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="6.0.0"
+readonly VERSION="6.1.0"
 readonly LOG_FILE="/var/log/shrink-vm.log"
 readonly DEFAULT_HEADROOM_GB=2
 
@@ -431,6 +431,7 @@ if $DRY_RUN; then
     e "  ${BOLD}Storage:${NC}      $STORAGE_NAME ($STORAGE_TYPE)"
     e "  ${BOLD}Disk:${NC}         $DISK_NAME"
     e "  ${BOLD}Format:${NC}       $IMG_FORMAT"
+    e "  ${BOLD}OS:${NC}           $OS_TYPE"
     e "  ${BOLD}Current:${NC}      ${CURRENT_SIZE_GB}GB"
     e "  ${BOLD}Target:${NC}       ${NEW_SIZE_GB}GB"
     e "  ${BOLD}Savings:${NC}      ${SAVINGS_GB}GB"

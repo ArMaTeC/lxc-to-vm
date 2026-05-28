@@ -11,6 +11,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.0] - 2026-05-28
+
+### Added (Windows VM Disk Support)
+
+- **Windows VM disk shrink** (`shrink-vm.sh`)
+  - Auto-detects Windows VMs via libguestfs inspection or partition heuristics
+  - NTFS shrink via `virt-resize` (primary) and `ntfsresize` (fallback)
+  - 30 GB safety minimum with `--force` override
+  - NTFS dirty-flag detection with user-facing guidance
+
+- **Windows VM disk expand** (`expand-vm.sh`)
+  - Offline NTFS expansion via libguestfs or ntfsresize
+  - Hot-expand support preserved (relies on QEMU guest agent inside Windows)
+  - Auto-detected or `--os-type windows` override
+
+- **Windows VM clone-replace** (`clone-replace-disk.sh`)
+  - Preserves Windows boot configuration (BCD, boot sector, ESP)
+  - libguestfs-aware clone path with NTFS expansion
+  - Cross-storage migration support for Windows VMs
+
+- **Shared libraries** (`lib/`)
+  - `lib/common.sh` - Library loader for sibling scripts
+  - `lib/os-detect.sh` - Guest OS detection via libguestfs and fallback heuristics
+  - `lib/windows-disk.sh` - Windows-specific shrink/expand/clone helpers
+
+- **CLI enhancements**
+  - `--os-type <linux|windows>` override flag on all three disk scripts
+  - OS type shown in dry-run summaries
+  - Windows-specific exit codes (`E_WINDOWS_MIN_SIZE`, `E_NTFS_DIRTY`, `E_LIBGUESTFS`, `E_QEMU_AGENT`)
+
+- **Documentation**
+  - New `docs/windows-vm.md` guide with prerequisites, examples, and troubleshooting
+  - README.md updated with Windows VM feature and supported distributions table
+
 ## [6.0.8] - 2026-05-28
 
 ### Added
