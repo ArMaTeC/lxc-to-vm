@@ -10,6 +10,30 @@
 
 The lxc-to-vm suite now supports Windows virtual machines for disk shrink, expand, and clone-replace operations. Windows VMs use NTFS filesystems, which require different tools than the Linux `e2fsck`/`resize2fs` path.
 
+## What You Can and Cannot Do with Windows VMs
+
+### ✅ Supported (Disk Operations Only)
+
+| Operation | Script | Notes |
+| --- | --- | --- |
+| **Shrink disk** | `shrink-vm.sh` | NTFS shrink via `virt-resize` or `ntfsresize`; 30 GB safety minimum |
+| **Expand disk (offline)** | `expand-vm.sh` | Offline NTFS expansion; VM must be stopped |
+| **Expand disk (hot)** | `expand-vm.sh` | Requires QEMU guest agent running inside Windows |
+| **Clone & replace disk** | `clone-replace-disk.sh` | Preserves BCD/boot sector; cross-storage migration supported |
+| **Auto-detect OS type** | All disk scripts | `libguestfs` inspection or partition heuristics |
+
+### ❌ Not Supported (Due to Windows OS)
+
+| Operation | Reason |
+| --- | --- |
+| **VM → LXC conversion** | `vm-to-lxc.sh` will reject Windows VMs. Proxmox LXC containers are **Linux-only** by design — they share the host kernel and cannot run Windows. |
+| **LXC → VM conversion** | Not applicable; there is no such thing as a Windows LXC container. |
+| **BitLocker-encrypted disk operations** | Encrypted volumes cannot be safely resized without decryption keys. |
+| **ReFS filesystem operations** | Only NTFS is supported; ReFS requires different tooling. |
+| **In-place OS activation / licensing changes** | Out of scope; disk geometry is preserved but licensing is untouched. |
+
+> **Key Takeaway**: The suite treats Windows VMs as **disk-management targets only**. You can shrink, expand, and clone their disks, but you cannot convert them into (or from) LXC containers.
+
 ## Prerequisites
 
 Install the required packages on your Proxmox host:
@@ -79,7 +103,7 @@ You can override auto-detection with `--os-type windows` or `--os-type linux`.
 ## Tool Paths
 
 | Operation | Primary Tool | Fallback Tool |
-|-----------|-------------|---------------|
+| ----------- | ------------- | --------------- |
 | Shrink | `virt-resize` (libguestfs) | `ntfsresize` |
 | Expand (offline) | `virt-resize` (libguestfs) | `ntfsresize` |
 | Expand (hot) | QEMU monitor `block_resize` | N/A |
