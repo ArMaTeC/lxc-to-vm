@@ -167,6 +167,8 @@ Options:
   -n, --dry-run          Show what would be done without making changes
   -u, --use-libguestfs   Use virt-resize/libguestfs (more reliable, slower)
   --skip-fs-check        Skip filesystem checks (not recommended)
+  --force                Override Windows 30GB minimum size enforcement
+  --os-type <TYPE>       Override OS detection (linux, windows)
   -h, --help             Show this help message
   -V, --version          Show version
 
@@ -175,6 +177,7 @@ Examples:
   $0 -v 100 -g 5             # Shrink with 5GB extra headroom
   $0 -v 100 --dry-run        # Preview only, no changes
   $0 -v 100 -u               # Use libguestfs for safer shrink
+  $0 -v 100 --force          # Force shrink below Windows minimum
 
 Storage Support:
   - LVM-thin: Block device shrink
@@ -182,10 +185,14 @@ Storage Support:
   - ZFS: ZVOL shrink
   - NFS/CIFS: Treated as directory storage
 
+OS Support:
+  - Linux: Auto-detected; uses e2fsck/resize2fs
+  - Windows: Auto-detected; uses libguestfs/ntfsresize
+
 Safety Notes:
   - VM will be stopped during shrink (downtime required)
   - Filesystem check runs before and after shrink
-  - Minimum 2GB disk size is enforced
+  - Minimum 2GB disk size is enforced (30GB for Windows)
   - Always backup critical data before shrinking
 USAGE
     exit 0
@@ -636,6 +643,7 @@ case "$STORAGE_TYPE" in
         die "Unsupported storage type: $STORAGE_TYPE"
         ;;
 esac
+fi
 
 # Update VM config with new size
 log "Updating VM configuration..."

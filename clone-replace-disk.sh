@@ -170,6 +170,7 @@ OPTIONS:
   --keep-old             Keep old disk attached as backup (default behavior)
   -n, --dry-run          Show what would be done without making changes
   --force                Skip confirmation prompts
+  --os-type <TYPE>       Override OS detection for VMs (linux, windows)
   -h, --help             Show this help message
   -V, --version          Show version
 
@@ -184,6 +185,10 @@ Examples:
   $0 -t vm -i 200 -d scsi0       # Clone and replace VM 200 scsi0
   $0 -t lxc -i 100 --size 150    # Clone with expansion to 150GB
   $0 -t vm -i 200 --remove-old   # Clone, replace, remove original
+
+OS Support:
+  - Linux VMs/LXCs: Auto-detected; uses standard filesystem tools
+  - Windows VMs: Auto-detected; uses libguestfs/ntfsresize to preserve boot config
 
 Safety Notes:
   - VM/Container will be stopped during operation
@@ -201,6 +206,17 @@ mkdir -p "$(dirname "$LOG_FILE")"
 echo "--- clone-replace-disk run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
+# SHARED LIBRARIES
+# ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/lib/common.sh"
+    lib_source "os-detect.sh"
+    lib_source "windows-disk.sh"
+fi
+
+# ==============================================================================
 # COMMAND-LINE ARGUMENT PARSING
 # ==============================================================================
 TYPE=""
@@ -215,6 +231,7 @@ SNAPSHOT=false
 KEEP_OLD=true
 DRY_RUN=false
 FORCE=false
+OS_TYPE_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -230,6 +247,7 @@ while [[ $# -gt 0 ]]; do
         --keep-old)      KEEP_OLD=true; REMOVE_OLD=false; shift ;;
         -n|--dry-run)    DRY_RUN=true; shift ;;
         --force)         FORCE=true; shift ;;
+        --os-type)       OS_TYPE_OVERRIDE="$2"; shift 2 ;;
         -h|--help)       usage ;;
         -V|--version)    echo "v${VERSION}"; exit 0 ;;
         *)               die "Unknown option: $1 (use --help)" ;;
@@ -311,6 +329,28 @@ else
     SOURCE_FORMAT="raw"
 fi
 log "Source format: $SOURCE_FORMAT"
+
+# ==============================================================================
+# OS DETECTION
+# ==============================================================================
+OS_TYPE="linux"
+if [[ "$TYPE" == "vm" ]]; then
+    if [[ -n "$OS_TYPE_OVERRIDE" ]]; then
+        OS_TYPE="$OS_TYPE_OVERRIDE"
+        log "OS type overridden by user: $OS_TYPE"
+    else
+        if command -v virt-inspector &>/dev/null || command -v fdisk &>/dev/null; then
+            if detect_os_from_disk "$SOURCE_PATH" "$SOURCE_FORMAT" 2>/dev/null; then
+                log "Detected OS: $OS_TYPE (distro=$OS_DISTRO, version=$OS_VERSION, boot=$OS_BOOT_MODE)"
+            else
+                log "OS detection inconclusive; defaulting to linux path"
+                OS_TYPE="linux"
+            fi
+        else
+            log "OS detection tools unavailable; defaulting to linux path"
+        fi
+    fi
+fi
 
 # ==============================================================================
 # SET DEFAULTS
@@ -427,7 +467,55 @@ log "Source: $SOURCE_PATH"
 TARGET_STORAGE_TYPE=$(pvesm status 2>/dev/null | awk -v s="$TARGET_STORAGE" '$1==s{print $2}')
 log "Target storage type: $TARGET_STORAGE_TYPE"
 
-# Create clone based on storage type
+# ------------------------------------------------------------------------------
+# Windows VM: use libguestfs-aware clone path
+# ------------------------------------------------------------------------------
+if [[ "$TYPE" == "vm" && "$OS_TYPE" == "windows" ]]; then
+    log "Windows VM detected; using NTFS-aware clone path..."
+
+    if ! $DRY_RUN; then
+        # Determine target path/device
+        case "$TARGET_STORAGE_TYPE" in
+            lvmthin|lvm)
+                VG_NAME=$(pvesm path "$TARGET_REF" 2>/dev/null | cut -d'/' -f3 || vgs --noheadings -o vg_name | head -1 | tr -d ' ')
+                [[ -n "$VG_NAME" ]] || die "Could not determine VG name for $TARGET_STORAGE"
+                lvcreate -y -L "${TARGET_SIZE}G" -n "$TARGET_VOLUME" "$VG_NAME" >> "$LOG_FILE" 2>&1 || die "Failed to create LVM volume"
+                TARGET_DEVICE="/dev/${VG_NAME}/${TARGET_VOLUME}"
+                ;;
+            zfspool)
+                ZFS_POOL=$(pvesm path "$TARGET_REF" 2>/dev/null | sed 's|/dev/zd0||' | cut -d'/' -f1)
+                [[ -n "$ZFS_POOL" ]] || die "Could not determine ZFS pool"
+                zfs create -V "${TARGET_SIZE}G" "${ZFS_POOL}/${TARGET_VOLUME}" >> "$LOG_FILE" 2>&1 || die "Failed to create ZFS volume"
+                TARGET_DEVICE="/dev/zvol/${ZFS_POOL}/${TARGET_VOLUME}"
+                ;;
+            dir|nfs|cifs|glusterfs)
+                TARGET_DIR=$(pvesm path "$TARGET_STORAGE:dummy" 2>/dev/null | xargs dirname)
+                [[ -n "$TARGET_DIR" && -d "$TARGET_DIR" ]] || die "Could not determine target directory"
+                TARGET_DEVICE="${TARGET_DIR}/${TARGET_VOLUME}"
+                if [[ "$TARGET_FORMAT" == "qcow2" ]]; then
+                    TARGET_DEVICE="${TARGET_DEVICE}.qcow2"
+                fi
+                ;;
+            *)
+                die "Unsupported target storage type: $TARGET_STORAGE_TYPE"
+                ;;
+        esac
+
+        windows_clone_disk "$SOURCE_PATH" "$TARGET_DEVICE" "$TARGET_SIZE" "$SOURCE_FORMAT"
+    else
+        log "[DRY-RUN] Would clone Windows disk preserving boot config"
+    fi
+
+    # Skip standard clone case for Windows
+    SKIP_STANDARD_CLONE=true
+else
+    SKIP_STANDARD_CLONE=false
+fi
+
+# ------------------------------------------------------------------------------
+# Standard clone (Linux / LXC)
+# ------------------------------------------------------------------------------
+if ! $SKIP_STANDARD_CLONE; then
 case "$TARGET_STORAGE_TYPE" in
     lvmthin|lvm)
         # For LVM, we need to create LV and then copy
@@ -528,6 +616,7 @@ case "$TARGET_STORAGE_TYPE" in
         die "Unsupported target storage type: $TARGET_STORAGE_TYPE"
         ;;
 esac
+fi
 
 ok "Disk cloned successfully."
 

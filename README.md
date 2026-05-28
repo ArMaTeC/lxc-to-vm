@@ -29,6 +29,7 @@
 - **🔌 Hook System** - Custom automation at every stage
 - **🧙 Interactive Wizard** - TUI mode for guided conversion
 - **☁️ Cloud Export** - Export to S3, NFS, or remote storage
+- **🧪 Remote Testing** - Automated remote PVE validation with `test-remote-pve.sh`
 
 ---
 
@@ -161,6 +162,13 @@ sudo ./clone-replace-disk.sh -t vm -i 200 --size 250 --remove-old
 sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
 ```
 
+### Remote PVE Testing
+
+```bash
+# Test conversions on a remote Proxmox host
+sudo ./test-remote-pve.sh
+```
+
 ---
 
 ## 📚 Documentation
@@ -176,6 +184,7 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
 | **[shrink-vm.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/shrink-vm)** | VM disk shrink guide |
 | **[expand-vm.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/expand-vm)** | VM disk expansion guide |
 | **[clone-replace-disk.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/clone-replace-disk)** | Disk clone & replace tool |
+| **[test-remote-pve](https://github.com/ArMaTeC/lxc-to-vm/wiki/test-remote-pve)** | Automated remote PVE testing |
 | **[add-file-headers.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/add-file-headers)** | File header automation tool |
 | **[Hooks](https://github.com/ArMaTeC/lxc-to-vm/wiki/Hooks)** | Automation hook system |
 | **[Troubleshooting](https://github.com/ArMaTeC/lxc-to-vm/wiki/Troubleshooting)** | Common issues and solutions |
@@ -218,14 +227,30 @@ lxc-to-vm/
 ├── shrink-vm.sh          # VM disk shrinker
 ├── expand-vm.sh          # VM disk expander
 ├── clone-replace-disk.sh # Disk clone & replace tool
+├── test-remote-pve.sh    # Automated remote PVE test helper
+├── test-remote-pve.ps1   # PowerShell remote PVE test helper
 ├── add-file-headers.sh   # File header automation tool
 ├── examples/             # Hook examples for lxc-to-vm
 ├── docs/                 # Wiki source files
-├── test-remote-pve.sh    # Automated remote PVE test helper
 ├── CHANGELOG.md          # Version history
 ├── CONTRIBUTING.md       # Contribution guidelines
 └── README.md             # This file
 ```
+
+---
+
+## 📋 Quick Reference
+
+| Script | Purpose | Key Flags |
+| ------ | ------- | --------- |
+| `lxc-to-vm.sh` | LXC → VM conversion | `-c` (CT ID), `-v` (VM ID), `-s` (storage), `--start`, `--shrink` |
+| `vm-to-lxc.sh` | VM → LXC conversion | `-v` (VM ID), `-c` (CT ID), `-s` (storage), `--start`, `--snapshot` |
+| `shrink-lxc.sh` | Shrink LXC disk | `-c` (CT ID), `--dry-run` |
+| `expand-lxc.sh` | Expand LXC disk | `-c` (CT ID), `-s` (size), `-a` (add), `--max`, `--no-restart` |
+| `shrink-vm.sh` | Shrink VM disk | `-v` (VM ID), `-g` (headroom), `-u` (libguestfs), `--dry-run` |
+| `expand-vm.sh` | Expand VM disk | `-v` (VM ID), `-s` (size), `-a` (add), `--max`, `--hot-expand` |
+| `clone-replace-disk.sh` | Clone & replace disk | `-t` (type), `-i` (ID), `--size`, `--remove-old`, `--dry-run` |
+| `test-remote-pve.sh` | Remote PVE testing | Edit config vars in script, then run without args |
 
 ---
 

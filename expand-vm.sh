@@ -50,6 +50,8 @@ readonly E_DISK_FULL=3
 readonly E_PERMISSION=4
 readonly E_EXPAND_FAILED=5
 readonly E_NO_SPACE=6
+readonly E_NTFS_EXPAND=7
+readonly E_QEMU_AGENT=8
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -163,6 +165,7 @@ OPTIONS:
   --hot-expand           Attempt online expansion (VM stays running)
   --no-restart           Keep VM stopped after expansion (if it was stopped)
   --force                Skip confirmation prompts
+  --os-type <TYPE>       Override OS detection (linux, windows)
   -h, --help             Show this help message
   -V, --version          Show version
 
@@ -182,6 +185,10 @@ Storage Support:
   - ZFS: Hot-expand supported
   - NFS/CIFS: Requires VM stop
 
+OS Support:
+  - Linux: Auto-detected; resize2fs used for offline expansion
+  - Windows: Auto-detected; libguestfs/ntfsresize used for offline expansion
+
 Safety Notes:
   - Verify sufficient free space in the storage pool
   - LVM-thin users: monitor thin pool usage
@@ -198,6 +205,17 @@ mkdir -p "$(dirname "$LOG_FILE")"
 echo "--- expand-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
+# SHARED LIBRARIES
+# ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/lib/common.sh"
+    lib_source "os-detect.sh"
+    lib_source "windows-disk.sh"
+fi
+
+# ==============================================================================
 # COMMAND-LINE ARGUMENT PARSING
 # ==============================================================================
 VMID=""
@@ -209,6 +227,7 @@ SAFETY_MARGIN_PCT=$POOL_SAFETY_MARGIN_PCT
 HOT_EXPAND=false
 NO_RESTART=false
 FORCE=false
+OS_TYPE_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -223,6 +242,7 @@ while [[ $# -gt 0 ]]; do
         --no-restart)     NO_RESTART=true; shift ;;
         -n|--dry-run)     DRY_RUN=true; shift ;;
         --force)          FORCE=true; shift ;;
+        --os-type)        OS_TYPE_OVERRIDE="$2"; shift 2 ;;
         -h|--help)        usage ;;
         -V|--version)     echo "v${VERSION}"; exit 0 ;;
         *)                die "Unknown option: $1 (use --help)" ;;
@@ -292,6 +312,26 @@ if [[ -f "$DISK_PATH" ]]; then
 else
     IMG_FORMAT="raw"
     log "Block device detected (raw format)"
+fi
+
+# ==============================================================================
+# OS DETECTION
+# ==============================================================================
+OS_TYPE="linux"
+if [[ -n "$OS_TYPE_OVERRIDE" ]]; then
+    OS_TYPE="$OS_TYPE_OVERRIDE"
+    log "OS type overridden by user: $OS_TYPE"
+else
+    if command -v virt-inspector &>/dev/null || command -v fdisk &>/dev/null; then
+        if detect_os_from_disk "$DISK_PATH" "$IMG_FORMAT" 2>/dev/null; then
+            log "Detected OS: $OS_TYPE (distro=$OS_DISTRO, version=$OS_VERSION, boot=$OS_BOOT_MODE)"
+        else
+            log "OS detection inconclusive; defaulting to linux path"
+            OS_TYPE="linux"
+        fi
+    else
+        log "OS detection tools unavailable; defaulting to linux path"
+    fi
 fi
 
 # ==============================================================================
@@ -552,6 +592,25 @@ case "$STORAGE_TYPE" in
         die "Unsupported storage type: $STORAGE_TYPE"
         ;;
 esac
+
+# ------------------------------------------------------------------------------
+# Windows filesystem expansion (offline only)
+# ------------------------------------------------------------------------------
+if [[ "$OS_TYPE" == "windows" ]] && ! $HOT_EXPAND; then
+    log "Windows VM detected; expanding NTFS filesystem..."
+
+    if $DRY_RUN; then
+        log "[DRY-RUN] Would expand NTFS to ${NEW_SIZE_GB}GB"
+    else
+        # Primary: libguestfs
+        if ! windows_expand_libguestfs "$DISK_PATH" "$NEW_SIZE_GB" "$IMG_FORMAT" "$VMID"; then
+            # Fallback: ntfsresize
+            if ! windows_expand_ntfsresize "$DISK_PATH" "$NEW_SIZE_GB" "$IMG_FORMAT" "$VMID"; then
+                die "Windows NTFS expand failed. See $LOG_FILE for details."
+            fi
+        fi
+    fi
+fi
 
 # Update VM config
 log "Updating VM configuration..."
