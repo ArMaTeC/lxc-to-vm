@@ -130,6 +130,16 @@ on_error() {
 }
 trap 'on_error' ERR
 
+# ==============================================================================
+# SHARED LIBRARIES
+# ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/lib/common.sh"
+    lib_source "os-detect.sh"
+fi
+
 # --- Usage / Help ---
 usage() {
     cat <<USAGE
@@ -726,6 +736,16 @@ do_conversion() {
     DISK_PATH=$(pvesm path "$DISK_VOLID" 2>/dev/null)
     [[ -n "$DISK_PATH" && -e "$DISK_PATH" ]] || die "Cannot resolve disk path for $DISK_VOLID"
     log "VM disk: $DISK_PATH"
+
+    # --- OS detection: reject Windows VMs early ---
+    local disk_fmt=$(qemu-img info "$DISK_PATH" 2>/dev/null | awk '/file format:/{print $3}' || echo "raw")
+    if command -v detect_os_from_disk &>/dev/null; then
+        if detect_os_from_disk "$DISK_PATH" "$disk_fmt" 2>/dev/null; then
+            if [[ "$OS_TYPE" == "windows" ]]; then
+                die "VM $VMID is a Windows VM. Windows VMs cannot be converted to LXC containers because Proxmox LXC is Linux-only."
+            fi
+        fi
+    fi
 
     # --- Work directory ---
     local DEFAULT_WORK_BASE="/var/lib/vz/dump"
