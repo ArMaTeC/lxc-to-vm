@@ -91,8 +91,9 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200
 | `expand-vm.sh` | Expand VM disk | [expand-vm](expand-vm) |
 | `clone-replace-disk.sh` | Clone and replace disk | [clone-replace-disk](clone-replace-disk) |
 | `test-remote-pve.sh` | Remote PVE testing | [test-remote-pve](test-remote-pve) |
+| `windows-vm.md` | Windows VM disk operations | [windows-vm](windows-vm) |
 
-## �📖 Documentation Structure
+## � Documentation Structure
 
 ### Getting Started
 
@@ -110,6 +111,7 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200
 - **expand-vm.sh** - VM disk expansion guide
 - **clone-replace-disk.sh** - Disk clone and replace guide
 - **test-remote-pve.sh** - Automated remote PVE testing guide
+- **Windows VM Disk Ops** - Windows VM shrink/expand/clone guide
 
 ### Advanced Topics
 

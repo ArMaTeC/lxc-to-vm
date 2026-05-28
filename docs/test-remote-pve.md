@@ -80,3 +80,5 @@ qm terminal 260 -iface serial0
 - [lxc-to-vm.sh](lxc-to-vm) - The conversion script under test
 - [shrink-lxc.sh](shrink-lxc) - Container optimizer used during testing
 - [API & Automation](API-Automation) - CI/CD integration patterns
+
+> **PowerShell Users**: A `test-remote-pve.ps1` variant is also available for Windows hosts.
