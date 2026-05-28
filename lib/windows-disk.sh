@@ -127,7 +127,7 @@ windows_shrink_ntfsresize() {
     log "Using ntfsresize fallback for Windows shrink..."
 
     if ! command -v ntfsresize &>/dev/null; then
-        die "ntfsresize not available. Install ntfsprogs: apt install ntfsprogs"
+        die "ntfsresize not available. Install ntfs-3g: apt install ntfs-3g"
     fi
 
     local temp_raw="/tmp/vm-${vmid}-shrink.raw"
@@ -236,7 +236,7 @@ windows_expand_ntfsresize() {
     log "Using ntfsresize fallback for Windows expand..."
 
     if ! command -v ntfsresize &>/dev/null; then
-        die "ntfsresize not available. Install ntfsprogs: apt install ntfsprogs"
+        die "ntfsresize not available. Install ntfs-3g: apt install ntfs-3g"
     fi
 
     local loop_dev=""

@@ -15,7 +15,7 @@ The lxc-to-vm suite now supports Windows virtual machines for disk shrink, expan
 Install the required packages on your Proxmox host:
 
 ```bash
-apt-get update && apt-get install -y libguestfs-tools ntfs-3g ntfsprogs
+apt-get update && apt-get install -y libguestfs-tools ntfs-3g
 ```
 
 Verify NTFS support in libguestfs:
