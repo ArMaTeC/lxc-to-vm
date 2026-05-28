@@ -79,7 +79,20 @@ sudo ./shrink-vm.sh -v 100
 sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200
 ```
 
-## 📖 Documentation Structure
+## � Script Index
+
+| Script | Purpose | Docs Link |
+| --- | --- | --- |
+| `lxc-to-vm.sh` | LXC to VM conversion | [lxc-to-vm](lxc-to-vm) |
+| `vm-to-lxc.sh` | VM to LXC conversion | [vm-to-lxc](vm-to-lxc) |
+| `shrink-lxc.sh` | Shrink LXC container disk | [shrink-lxc](shrink-lxc) |
+| `expand-lxc.sh` | Expand LXC container disk | [expand-lxc](expand-lxc) |
+| `shrink-vm.sh` | Shrink VM disk | [shrink-vm](shrink-vm) |
+| `expand-vm.sh` | Expand VM disk | [expand-vm](expand-vm) |
+| `clone-replace-disk.sh` | Clone and replace disk | [clone-replace-disk](clone-replace-disk) |
+| `test-remote-pve.sh` | Remote PVE testing | [test-remote-pve](test-remote-pve) |
+
+## �📖 Documentation Structure
 
 ### Getting Started
 
@@ -96,6 +109,7 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200
 - **shrink-vm.sh** - VM disk shrink guide
 - **expand-vm.sh** - VM disk expansion guide
 - **clone-replace-disk.sh** - Disk clone and replace guide
+- **test-remote-pve.sh** - Automated remote PVE testing guide
 
 ### Advanced Topics
 

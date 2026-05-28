@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Handles multiple file types: shell scripts, Markdown, YAML, PowerShell, and config files
   - Binary files are automatically skipped
 
+### Documentation Refresh
+
+- **README.md**: Updated features list, repository structure, and quick-reference table to include all 8 scripts
+- **Quick-Reference Table**: Added to README.md for at-a-glance script flag lookup
+- **`docs/test-remote-pve.md`**: New documentation page for `test-remote-pve.sh` with usage, configuration, and exit codes
+- **`lxc-to-vm-wiki/test-remote-pve.md`**: Wiki mirror of test-remote-pve documentation
+- **`docs/Home.md` & `lxc-to-vm-wiki/Home.md`**: Added script index table and updated documentation structure
+- **`docs/_Sidebar.md` & `lxc-to-vm-wiki/_Sidebar.md`**: Updated to list all documentation pages including test-remote-pve
+- **docs/ ↔ lxc-to-vm-wiki/ sync**: All shared documentation pages synchronized between repo docs and wiki source
+- **Broken link fixes**: Internal cross-references validated and corrected across all markdown files
+
 ## [6.0.7] - 2025-06-01
 
 ### Added (Disk Management Suite)

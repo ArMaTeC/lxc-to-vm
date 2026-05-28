@@ -24,6 +24,7 @@
 - [shrink-vm.sh](shrink-vm)
 - [expand-vm.sh](expand-vm)
 - [clone-replace-disk.sh](clone-replace-disk)
+- [test-remote-pve.sh](test-remote-pve)
 
 ## Advanced Topics
 
