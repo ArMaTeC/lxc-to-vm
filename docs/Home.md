@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: Home.md
+     Description: Home
+     License: MIT
+     ============================================================================== -->
 # Proxmox LXC ↔️ VM Converter Wiki
 
 Welcome to the comprehensive documentation for the Proxmox LXC ↔️ VM Converter suite!

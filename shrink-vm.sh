@@ -1,38 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Proxmox VM Disk Shrinker
-# Version: 6.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   This script safely shrinks a VM's disk to match its actual usage plus
-#   configurable headroom. Supports multiple storage backends and disk formats.
-#
-# SUPPORTED STORAGE TYPES:
-#   - LVM-thin (block devices)
-#   - LVM (thick provisioning)
-#   - Directory-based (qcow2 or raw images)
-#   - ZFS volumes
-#   - NFS/CIFS (treated as directory-based)
-#
-# SUPPORTED DISK FORMATS:
-#   - QCOW2 (copy-on-write, most common)
-#   - Raw (raw disk image)
-#
-# SHRINK METHODS:
-#   - Offline shrink: VM stopped, disk processed directly
-#   - Uses libguestfs (virt-resize) when available for safe shrink
-#   - Falls back to manual loop mount method
-#
-# SAFETY FEATURES:
-#   - Dry-run mode previews changes
-#   - VM automatically stopped and restarted
-#   - Filesystem check before and after shrink
-#   - Minimum disk size enforced (2GB)
-#   - Metadata margin calculation
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: shrink-vm.sh
+# Description: Shrinks VM disk images to usage plus headroom
+# License: MIT
 # ==============================================================================
 
 set -Eeuo pipefail
@@ -78,8 +50,13 @@ readonly E_NOT_FOUND=2
 readonly E_DISK_FULL=3
 readonly E_PERMISSION=4
 readonly E_SHRINK_FAILED=5
+readonly E_WINDOWS_MIN_SIZE=6
+readonly E_NTFS_DIRTY=7
+readonly E_LIBGUESTFS=8
 
 HEADROOM_GB=$DEFAULT_HEADROOM_GB
+FORCE=false
+OS_TYPE_OVERRIDE=""
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -222,6 +199,17 @@ mkdir -p "$(dirname "$LOG_FILE")"
 echo "--- shrink-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
+# SHARED LIBRARIES
+# ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/lib/common.sh"
+    lib_source "os-detect.sh"
+    lib_source "windows-disk.sh"
+fi
+
+# ==============================================================================
 # COMMAND-LINE ARGUMENT PARSING
 # ==============================================================================
 VMID=""
@@ -236,6 +224,8 @@ while [[ $# -gt 0 ]]; do
         -n|--dry-run)    DRY_RUN=true; shift ;;
         -u|--use-libguestfs) USE_LIBGUESTFS=true; shift ;;
         --skip-fs-check) SKIP_FS_CHECK=true; shift ;;
+        --force)         FORCE=true; shift ;;
+        --os-type)       OS_TYPE_OVERRIDE="$2"; shift 2 ;;
         -h|--help)       usage ;;
         -V|--version)    echo "v${VERSION}"; exit 0 ;;
         *)               die "Unknown option: $1 (use --help)" ;;
@@ -333,6 +323,26 @@ else
     log "Block device detected (raw format assumed)"
 fi
 
+# ==============================================================================
+# OS DETECTION
+# ==============================================================================
+OS_TYPE="linux"
+if [[ -n "$OS_TYPE_OVERRIDE" ]]; then
+    OS_TYPE="$OS_TYPE_OVERRIDE"
+    log "OS type overridden by user: $OS_TYPE"
+else
+    if command -v virt-inspector &>/dev/null || command -v fdisk &>/dev/null; then
+        if detect_os_from_disk "$DISK_PATH" "$IMG_FORMAT" 2>/dev/null; then
+            log "Detected OS: $OS_TYPE (distro=$OS_DISTRO, version=$OS_VERSION, boot=$OS_BOOT_MODE)"
+        else
+            log "OS detection inconclusive; defaulting to linux path"
+            OS_TYPE="linux"
+        fi
+    else
+        log "OS detection tools unavailable; defaulting to linux path"
+    fi
+fi
+
 # Get used space using virt-df if available, or estimate from filesystem
 USED_GB=0
 if command -v virt-df &>/dev/null && [[ "$IMG_FORMAT" == "qcow2" || "$IMG_FORMAT" == "raw" ]]; then
@@ -376,6 +386,15 @@ META_MARGIN_GB=$((META_MARGIN_MB / 1024 + 1))
 # Calculate final target size
 NEW_SIZE_GB=$((USED_GB + META_MARGIN_GB + HEADROOM_GB))
 [[ "$NEW_SIZE_GB" -lt "$MIN_DISK_GB" ]] && NEW_SIZE_GB=$MIN_DISK_GB
+
+# Windows-specific minimum size enforcement
+if [[ "$OS_TYPE" == "windows" && "$NEW_SIZE_GB" -lt "$WINDOWS_MIN_DISK_GB" ]]; then
+    if ! $FORCE; then
+        die "Windows VM shrink would result in ${NEW_SIZE_GB}GB, which is below the ${WINDOWS_MIN_DISK_GB}GB safety minimum. Use --force to override."
+    else
+        warn "Windows shrink below ${WINDOWS_MIN_DISK_GB}GB enforced by --force."
+    fi
+fi
 
 log "Used space: ~${USED_GB}GB"
 log "Metadata margin: ${META_MARGIN_GB}GB"
@@ -438,32 +457,61 @@ read -rp "Continue? [y/N]: " CONFIRM
 # ==============================================================================
 log "Beginning shrink operation..."
 
-# Use libguestfs if requested (most reliable for qcow2)
-if $USE_LIBGUESTFS && command -v virt-resize &>/dev/null; then
-    log "Using libguestfs virt-resize..."
-    
-    TEMP_RAW="/tmp/vm-${VMID}-shrink.raw"
-    trap "rm -f '$TEMP_RAW' 2>/dev/null || true" EXIT
-    
-    # Convert to raw
-    log "Converting to temporary raw image..."
-    qemu-img convert -f "$IMG_FORMAT" -O raw "$DISK_PATH" "$TEMP_RAW"
-    
-    # Shrink using virt-resize
-    log "Shrinking with virt-resize..."
-    if ! virt-resize --shrink /dev/sda1 --output /tmp/vm-${VMID}-new.raw "$TEMP_RAW" 2>&1 | tee -a "$LOG_FILE"; then
-        warn "virt-resize failed. Trying standard method..."
-    else
-        # Convert back
-        log "Converting back to $IMG_FORMAT..."
-        qemu-img convert -f raw -O "$IMG_FORMAT" /tmp/vm-${VMID}-new.raw "$DISK_PATH"
-        rm -f /tmp/vm-${VMID}-new.raw "$TEMP_RAW"
-        trap - EXIT
-        ok "Shrink complete via libguestfs."
-    fi
-fi
+# ------------------------------------------------------------------------------
+# Windows VM shrink path
+# ------------------------------------------------------------------------------
+if [[ "$OS_TYPE" == "windows" ]]; then
+    log "Windows VM detected; using NTFS-compatible shrink path..."
 
-# Standard shrink method by storage type
+    if ! $DRY_RUN; then
+        # Check NTFS consistency first
+        if ! windows_check_ntfs "$DISK_PATH" "$LOG_FILE"; then
+            warn "NTFS check issues detected. Run chkdsk inside the Windows VM, then retry."
+        fi
+
+        # Primary: libguestfs
+        if windows_shrink_libguestfs "$DISK_PATH" "$NEW_SIZE_GB" "$IMG_FORMAT" "$VMID"; then
+            SHRINK_DONE=true
+        # Fallback: ntfsresize
+        elif windows_shrink_ntfsresize "$DISK_PATH" "$NEW_SIZE_GB" "$IMG_FORMAT" "$VMID"; then
+            SHRINK_DONE=true
+        else
+            die "Windows shrink failed. See $LOG_FILE for details."
+        fi
+    else
+        log "[DRY-RUN] Would shrink Windows disk to ${NEW_SIZE_GB}GB using NTFS tools"
+    fi
+
+# ------------------------------------------------------------------------------
+# Linux VM shrink path (existing logic)
+# ------------------------------------------------------------------------------
+else
+    # Use libguestfs if requested (most reliable for qcow2)
+    if $USE_LIBGUESTFS && command -v virt-resize &>/dev/null; then
+        log "Using libguestfs virt-resize..."
+        
+        TEMP_RAW="/tmp/vm-${VMID}-shrink.raw"
+        trap "rm -f '$TEMP_RAW' 2>/dev/null || true" EXIT
+        
+        # Convert to raw
+        log "Converting to temporary raw image..."
+        qemu-img convert -f "$IMG_FORMAT" -O raw "$DISK_PATH" "$TEMP_RAW"
+        
+        # Shrink using virt-resize
+        log "Shrinking with virt-resize..."
+        if ! virt-resize --shrink /dev/sda1 --output /tmp/vm-${VMID}-new.raw "$TEMP_RAW" 2>&1 | tee -a "$LOG_FILE"; then
+            warn "virt-resize failed. Trying standard method..."
+        else
+            # Convert back
+            log "Converting back to $IMG_FORMAT..."
+            qemu-img convert -f raw -O "$IMG_FORMAT" /tmp/vm-${VMID}-new.raw "$DISK_PATH"
+            rm -f /tmp/vm-${VMID}-new.raw "$TEMP_RAW"
+            trap - EXIT
+            ok "Shrink complete via libguestfs."
+        fi
+    fi
+
+    # Standard shrink method by storage type
 case "$STORAGE_TYPE" in
     lvmthin|lvm)
         log "Processing LVM volume..."

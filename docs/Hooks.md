@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: Hooks.md
+     Description: Hooks
+     License: MIT
+     ============================================================================== -->
 # Hooks System
 
 Complete guide to extending conversions with custom hooks for automation and integration.

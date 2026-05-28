@@ -1,9 +1,28 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: CHANGELOG.md
+     Description: Version history and release notes
+     License: MIT
+     ============================================================================== -->
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [6.0.8] - 2026-05-28
+
+### Added
+
+- **`add-file-headers.sh`**: New script to automatically manage file headers across the project
+  - Detects existing project headers and skips files that are already up-to-date
+  - Replaces outdated or third-party headers with the project standard
+  - Preserves shebang lines and shellcheck directives at the top of executable scripts
+  - Supports `--dry-run` for previewing changes without modifying files
+  - Supports `--check` for CI-friendly header validation (exit 1 if updates needed)
+  - Handles multiple file types: shell scripts, Markdown, YAML, PowerShell, and config files
+  - Binary files are automatically skipped
 
 ## [6.0.7] - 2025-06-01
 

@@ -1,38 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Proxmox VM to LXC Converter
-# Version: 1.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   Converts Proxmox KVM virtual machines to LXC containers with full
-#   VM artifact cleanup and container configuration. Supports multiple Linux
-#   distributions and provides advanced features like batch processing,
-#   predictive disk sizing, and Proxmox API integration.
-#
-# TARGET DISTRIBUTIONS:
-#   - Debian/Ubuntu (systemd)
-#   - Alpine Linux (OpenRC)
-#   - RHEL/CentOS/Rocky/Alma (systemd)
-#   - Arch Linux (systemd)
-#
-# KEY FEATURES:
-#   - Automatic VM artifact removal (kernel, bootloader, initramfs)
-#   - Multi-distro detection and LXC-specific configuration
-#   - Network configuration migration (ens18 → eth0)
-#   - Snapshot/rollback safety
-#   - Batch and range conversion modes
-#   - Proxmox API cluster support
-#   - Plugin/hook system for extensibility
-#   - Predictive disk size advisor
-#
-# SUPPORTED STORAGE:
-#   - LVM-thin (recommended)
-#   - Directory, NFS, CIFS
-#   - ZFS
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: vm-to-lxc.sh
+# Description: Converts KVM virtual machines to Proxmox LXC containers
+# License: MIT
 # ==============================================================================
 
 # ==============================================================================

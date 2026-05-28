@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: Troubleshooting.md
+     Description: Troubleshooting
+     License: MIT
+     ============================================================================== -->
 # Troubleshooting Guide
 
 Common issues and solutions for the Proxmox LXC ↔️ VM Converter suite.

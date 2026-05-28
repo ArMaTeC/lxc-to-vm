@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: _Sidebar.md
+     Description:  Sidebar
+     License: MIT
+     ============================================================================== -->
 # Wiki Navigation
 
 ## Getting Started

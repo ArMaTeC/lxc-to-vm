@@ -1,42 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Proxmox VM Disk Expander
-# Version: 6.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   This script safely expands a VM's disk to a specified size.
-#   Supports multiple expansion modes and storage backends.
-#
-# SUPPORTED STORAGE TYPES:
-#   - LVM-thin (block devices)
-#   - LVM (thick provisioning)
-#   - Directory-based (qcow2 or raw images)
-#   - ZFS volumes
-#   - NFS/CIFS (treated as directory-based)
-#
-# SUPPORTED DISK FORMATS:
-#   - QCOW2 (copy-on-write, most common)
-#   - Raw (raw disk image)
-#
-# EXPANSION METHODS:
-#   - Offline expand: VM stopped, disk expanded directly
-#   - Hot-expand: VM running, uses QEMU monitor/online resize
-#
-# EXPANSION MODES:
-#   - Absolute size (-s): Set exact target size
-#   - Add space (-a): Add specified GB to current size
-#   - Max available (--max): Use all available pool space
-#   - Percentage (--percent): Use percentage of pool capacity
-#
-# SAFETY FEATURES:
-#   - Dry-run mode previews changes
-#   - Automatic storage space validation
-#   - Safety margins prevent pool exhaustion
-#   - Configurable max expansion limits
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: expand-vm.sh
+# Description: Expands VM disk size with hot-expand support
+# License: MIT
 # ==============================================================================
 
 set -Eeuo pipefail

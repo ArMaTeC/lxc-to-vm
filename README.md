@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: README.md
+     Description: Project documentation and usage guide
+     License: MIT
+     ============================================================================== -->
 # 🚀 Proxmox LXC ↔️ VM Converter
 
 <!-- markdownlint-disable MD013 -->
@@ -40,6 +46,7 @@ mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh -o shrink-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh -o expand-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh -o clone-replace-disk.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/add-file-headers.sh -o add-file-headers.sh \
   && chmod +x *.sh
 ```
 
@@ -169,6 +176,7 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
 | **[shrink-vm.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/shrink-vm)** | VM disk shrink guide |
 | **[expand-vm.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/expand-vm)** | VM disk expansion guide |
 | **[clone-replace-disk.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/clone-replace-disk)** | Disk clone & replace tool |
+| **[add-file-headers.sh](https://github.com/ArMaTeC/lxc-to-vm/wiki/add-file-headers)** | File header automation tool |
 | **[Hooks](https://github.com/ArMaTeC/lxc-to-vm/wiki/Hooks)** | Automation hook system |
 | **[Troubleshooting](https://github.com/ArMaTeC/lxc-to-vm/wiki/Troubleshooting)** | Common issues and solutions |
 | **[API & Automation](https://github.com/ArMaTeC/lxc-to-vm/wiki/API-Automation)** | CI/CD integration examples |
@@ -210,6 +218,7 @@ lxc-to-vm/
 ├── shrink-vm.sh          # VM disk shrinker
 ├── expand-vm.sh          # VM disk expander
 ├── clone-replace-disk.sh # Disk clone & replace tool
+├── add-file-headers.sh   # File header automation tool
 ├── examples/             # Hook examples for lxc-to-vm
 ├── docs/                 # Wiki source files
 ├── test-remote-pve.sh    # Automated remote PVE test helper

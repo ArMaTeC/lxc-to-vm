@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: Installation.md
+     Description: Installation
+     License: MIT
+     ============================================================================== -->
 # Installation Guide
 
 Complete installation and setup guide for the Proxmox LXC ↔️ VM Converter suite.

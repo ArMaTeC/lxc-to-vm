@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: expand-vm.md
+     Description: Expand vm
+     License: MIT
+     ============================================================================== -->
 # expand-vm.sh Guide
 
 Documentation for expanding a VM's disk in Proxmox VE.

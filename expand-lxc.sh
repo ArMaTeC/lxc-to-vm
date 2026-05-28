@@ -1,37 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Proxmox LXC Disk Expander
-# Version: 6.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   This script safely expands an LXC container's root disk to a specified size.
-#   Useful when a container is running out of space or before major updates.
-#   Supports multiple expansion modes: absolute size, incremental addition,
-#   percentage-based, or maximum available space.
-#
-# SUPPORTED STORAGE TYPES:
-#   - LVM-thin (proxmox default, most efficient for expansion)
-#   - LVM (thick provisioning)
-#   - Directory-based (raw or qcow2 images)
-#   - ZFS volumes (zfspool)
-#   - NFS/CIFS/GlusterFS (treated as directory-based)
-#
-# SAFETY FEATURES:
-#   - Dry-run mode previews changes without modifying anything
-#   - Container can remain running during expansion (hot-expand for supported types)
-#   - Filesystem check after expansion to verify integrity
-#   - Automatic storage space validation before expansion
-#   - Safety margin prevents filling storage pool to 100%
-#   - Configurable maximum expansion limits
-#
-# RISKS:
-#   - Always backup before major disk operations
-#   - Ensure sufficient free space in the storage pool
-#   - LVM-thin: monitor pool usage to avoid over-provisioning issues
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: expand-lxc.sh
+# Description: Expands LXC container disk size with multiple modes
+# License: MIT
 # ==============================================================================
 
 # Bash strict mode: exit on error, undefined variable, or pipe failure

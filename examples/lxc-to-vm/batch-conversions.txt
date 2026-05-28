@@ -1,6 +1,9 @@
-# Example batch conversion file for lxc-to-vm.sh
-# Format: <CTID> <VMID> [storage] [disk_size]
-# Lines starting with # are ignored
+# ==============================================================================
+# ### lxc-to-vm file header ###
+# File: batch-conversions.txt
+# Description: Batch conversions
+# License: MIT
+# ==============================================================================
 
 # Basic conversions (uses default storage and auto disk size)
 100 200

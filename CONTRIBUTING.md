@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: CONTRIBUTING.md
+     Description: Contribution guidelines for the project
+     License: MIT
+     ============================================================================== -->
 # Contributing to lxc-to-vm
 
 Thanks for your interest in contributing! Here's how to get started.

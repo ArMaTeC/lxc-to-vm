@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: lxc-to-vm.md
+     Description: Lxc to vm
+     License: MIT
+     ============================================================================== -->
 # lxc-to-vm.sh Complete Guide
 
 Comprehensive documentation for converting Proxmox LXC containers to KVM virtual machines.

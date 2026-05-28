@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: expand-lxc.md
+     Description: Expand lxc
+     License: MIT
+     ============================================================================== -->
 # expand-lxc.sh Guide
 
 Documentation for expanding an LXC container's root disk in Proxmox VE.

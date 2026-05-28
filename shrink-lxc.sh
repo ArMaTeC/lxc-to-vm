@@ -1,37 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Proxmox LXC Disk Shrinker
-# Version: 6.0.4
-# ==============================================================================
-#
-# DESCRIPTION:
-#   This script safely shrinks an LXC container's root disk to match its actual
-#   usage plus configurable headroom. This is particularly useful before
-#   converting containers to VMs with lxc-to-vm.sh, as it minimizes the disk
-#   image that needs to be copied.
-#
-# SUPPORTED STORAGE TYPES:
-#   - LVM-thin (proxmox default, most efficient for shrinking)
-#   - LVM (thick provisioning)
-#   - Directory-based (raw or qcow2 images)
-#   - ZFS volumes (zfspool)
-#   - NFS/CIFS/GlusterFS (treated as directory-based)
-#
-# SAFETY FEATURES:
-#   - Dry-run mode previews changes without modifying anything
-#   - Container is automatically stopped and restarted
-#   - Filesystem check (e2fsck) before and after shrink
-#   - Metadata margin calculation prevents over-shrinking
-#   - Minimum 2GB disk size enforced
-#   - Retry logic for resize2fs failures
-#
-# RISKS:
-#   - Always backup before shrinking! While safe, any disk operation carries risk
-#   - Container must be stopped during shrink (downtime required)
-#   - Insufficient headroom can cause container to run out of space
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: shrink-lxc.sh
+# Description: Optimizes and shrinks LXC container disk usage
+# License: MIT
 # ==============================================================================
 
 # Bash strict mode: exit on error, undefined variable, or pipe failure

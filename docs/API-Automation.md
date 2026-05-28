@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: API-Automation.md
+     Description: 'Source Container ID'
+     License: MIT
+     ============================================================================== -->
 # API & Automation
 
 Guide for programmatic control and automation of conversions using the Proxmox VE API.

@@ -1,39 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Proxmox LXC to VM Converter
-# Version: 6.0.4
-# ==============================================================================
-#
-# DESCRIPTION:
-#   Converts Proxmox LXC containers to KVM virtual machines with full
-#   bootloader injection and kernel installation. Supports multiple Linux
-#   distributions and provides advanced features like batch processing,
-#   predictive disk sizing, and Proxmox API integration.
-#
-# TARGET DISTRIBUTIONS:
-#   - Debian/Ubuntu (GRUB2, systemd)
-#   - Alpine Linux (GRUB, OpenRC)
-#   - RHEL/CentOS/Rocky/Alma (GRUB2, systemd)
-#   - Arch Linux (GRUB, systemd)
-#
-# KEY FEATURES:
-#   - Automatic bootloader installation via chroot
-#   - Multi-distro kernel detection and installation
-#   - Network configuration migration (eth0 → ens18)
-#   - Disk shrinking integration (shrink-lxc.sh)
-#   - Snapshot/rollback safety
-#   - Batch and range conversion modes
-#   - Proxmox API cluster support
-#   - Plugin/hook system for extensibility
-#   - Predictive disk size advisor
-#
-# SUPPORTED STORAGE:
-#   - LVM-thin (recommended)
-#   - Directory, NFS, CIFS
-#   - ZFS
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: lxc-to-vm.sh
+# Description: Converts Proxmox LXC containers to KVM virtual machines
+# License: MIT
 # ==============================================================================
 
 # ==============================================================================

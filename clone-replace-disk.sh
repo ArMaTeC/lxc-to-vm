@@ -1,41 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Proxmox Disk Clone & Replace Tool
-# Version: 1.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   Clones a VM or LXC disk to a new volume (optionally larger), then replaces
-#   the active disk with the clone. Useful when disk expansion isn't recognized
-#   by the guest OS, or for disk migration between storage backends.
-#
-# USE CASES:
-#   - Fix disks that show expanded size in Proxmox but not in guest OS
-#   - Migrate disks between storage backends (e.g., local-lvm to ZFS)
-#   - Create resized clones for capacity increases
-#   - Replace corrupted or problematic disk images
-#
-# WORKFLOW:
-#   1. Stop VM/Container (required for safety)
-#   2. Clone source disk to new target disk (with optional resize)
-#   3. Detach old disk from config (keep for backup/safety)
-#   4. Attach new disk to config
-#   5. Remove old disk (optional, with --remove-old flag)
-#
-# SUPPORTED STORAGE:
-#   - LVM-thin, LVM (thick)
-#   - Directory (qcow2, raw)
-#   - ZFS (zfspool)
-#   - Cross-storage cloning supported
-#
-# SAFETY FEATURES:
-#   - Dry-run mode for preview
-#   - Original disk kept unless --remove-old specified
-#   - Automatic rollback on failure
-#   - Snapshots before operations (optional)
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: clone-replace-disk.sh
+# Description: Clones and replaces disks to fix expansion issues
+# License: MIT
 # ==============================================================================
 
 set -Eeuo pipefail

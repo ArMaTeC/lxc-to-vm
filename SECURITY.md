@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: SECURITY.md
+     Description: Security policy and vulnerability reporting
+     License: MIT
+     ============================================================================== -->
 # Security Policy
 
 We take the security of our project seriously and appreciate your efforts to responsibly disclose any vulnerabilities. This document outlines our security policy and procedures for handling security-related issues.

@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: shrink-lxc.md
+     Description: Shrink lxc
+     License: MIT
+     ============================================================================== -->
 # shrink-lxc.sh Guide
 
 Documentation for optimizing LXC containers before conversion to reduce disk size.

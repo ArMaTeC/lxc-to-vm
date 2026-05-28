@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: shrink-vm.md
+     Description: Shrink vm
+     License: MIT
+     ============================================================================== -->
 # shrink-vm.sh Guide
 
 Documentation for shrinking a VM's disk to its actual usage in Proxmox VE.

@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: clone-replace-disk.md
+     Description: Clone replace disk
+     License: MIT
+     ============================================================================== -->
 # clone-replace-disk.sh Guide
 
 Documentation for cloning and replacing VM or LXC container disks in Proxmox VE.

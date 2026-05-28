@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: Examples.md
+     Description: Examples
+     License: MIT
+     ============================================================================== -->
 # Examples & Best Practices
 
 Real-world examples and best practices for using the Proxmox LXC ↔️ VM Converter suite.
