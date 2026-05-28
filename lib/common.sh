@@ -1,18 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# lxc-to-vm Common Library Loader
-# Version: 1.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   Sets up the library path for sibling scripts and provides shared utilities
-#   used across the lxc-to-vm suite.
-#
-# USAGE:
-#   source "$(dirname "$0")/lib/common.sh"
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: common.sh
+# Description: Common
+# License: MIT
 # ==============================================================================
 
 # Resolve the directory where this library lives

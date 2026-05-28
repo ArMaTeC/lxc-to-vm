@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: test-remote-pve.md
+     Description: Test remote pve
+     License: MIT
+     ============================================================================== -->
 # test-remote-pve.sh
 
 Automated remote Proxmox VE test helper for validating LXC-to-VM conversions.

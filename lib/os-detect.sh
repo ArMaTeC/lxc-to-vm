@@ -1,29 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# OS Detection Library
-# Version: 1.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   Detects the guest operating system inside a VM disk image or block device.
-#   Supports Linux and Windows detection via libguestfs inspection and
-#   fallback heuristics.
-#
-# USAGE:
-#   source "$(dirname "$0")/lib/common.sh"
-#   lib_source "os-detect.sh"
-#   detect_os_from_disk "/path/to/disk.qcow2"
-#
-# OUTPUT (sets global variables):
-#   OS_TYPE          - linux, windows, unknown
-#   OS_DISTRO        - debian, ubuntu, alpine, rhel, arch, windows, unknown
-#   OS_VERSION       - version string (e.g., "22.04", "11", "2022")
-#   OS_BOOT_MODE     - bios, uefi, unknown
-#   OS_PARTITION_TABLE - mbr, gpt, unknown
-#   OS_HAS_ESP       - true, false
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: os-detect.sh
+# Description: Os detect
+# License: MIT
 # ==============================================================================
 
 set -Eeuo pipefail

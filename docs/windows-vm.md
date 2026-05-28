@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: windows-vm.md
+     Description: Windows vm
+     License: MIT
+     ============================================================================== -->
 # Windows VM Disk Operations
 
 ## Overview

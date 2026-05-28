@@ -1,22 +1,10 @@
 #!/bin/bash
 # shellcheck shell=bash
 # ==============================================================================
-# Windows VM Disk Operation Library
-# Version: 1.0.0
-# ==============================================================================
-#
-# DESCRIPTION:
-#   Shared helpers for shrinking, expanding, and cloning Windows VM disks.
-#   Uses libguestfs as the primary path with ntfsresize fallback.
-#
-# USAGE:
-#   source "$(dirname "$0")/lib/common.sh"
-#   lib_source "windows-disk.sh"
-#
-# PREREQUISITES:
-#   libguestfs-tools OR ntfs-3g/ntfsprogs
-#
-# LICENSE: MIT
+# ### lxc-to-vm file header ###
+# File: windows-disk.sh
+# Description: Windows disk
+# License: MIT
 # ==============================================================================
 
 set -Eeuo pipefail
