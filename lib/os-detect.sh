@@ -7,8 +7,6 @@
 # License: MIT
 # ==============================================================================
 
-set -Eeuo pipefail
-
 ### Function: detect_os_from_disk
 # Detect the operating system installed on a disk image.
 #
@@ -44,7 +42,12 @@ detect_os_from_disk() {
     fi
 
     # Fallback path: partition type heuristics
-    _detect_via_partition_types "$disk_path" && return 0
+    if _detect_via_partition_types "$disk_path"; then
+        if [[ "$OS_TYPE" == "unknown" ]]; then
+            return 1
+        fi
+        return 0
+    fi
 
     return 1
 }
@@ -108,6 +111,9 @@ _detect_via_guestfs() {
         OS_HAS_ESP="true"
     fi
 
+    if [[ "$OS_TYPE" == "unknown" ]]; then
+        return 1
+    fi
     return 0
 }
 

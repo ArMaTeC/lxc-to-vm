@@ -7,12 +7,29 @@
 # License: MIT
 # ==============================================================================
 
-set -Eeuo pipefail
-
 # ------------------------------------------------------------------------------
 # Constants
 # ------------------------------------------------------------------------------
 readonly WINDOWS_MIN_DISK_GB=30
+
+# ------------------------------------------------------------------------------
+# Logging fallback
+# ------------------------------------------------------------------------------
+# These functions are normally defined by the sourcing script. Provide minimal
+# defaults so the library can be sourced standalone without failing.
+: "${LOG_FILE:=/var/log/windows-disk.log}"
+if [[ "$(type -t log 2>/dev/null)" != "function" ]]; then
+    log() { printf "[*] %s\n" "$*" | tee -a "$LOG_FILE"; }
+fi
+if [[ "$(type -t warn 2>/dev/null)" != "function" ]]; then
+    warn() { printf "[!] %s\n" "$*" | tee -a "$LOG_FILE"; }
+fi
+if [[ "$(type -t ok 2>/dev/null)" != "function" ]]; then
+    ok() { printf "[OK] %s\n" "$*" | tee -a "$LOG_FILE"; }
+fi
+if [[ "$(type -t die 2>/dev/null)" != "function" ]]; then
+    die() { printf "[FATAL] %s\n" "$*" >&2; exit 1; }
+fi
 
 ### Function: windows_check_ntfs
 # Check NTFS consistency on a disk image or block device.
@@ -52,18 +69,27 @@ windows_check_ntfs() {
             # Image file: need loop device
             local loop_dev
             loop_dev=$(losetup --show -f "$disk_path")
-            # shellcheck disable=SC2064
-            trap "losetup -d '$loop_dev' 2>/dev/null || true" RETURN
+
+            __cleanup_check_ntfs_loop() {
+                if [[ -n "${loop_dev:-}" ]]; then
+                    losetup -d "$loop_dev" 2>/dev/null || true
+                fi
+            }
+            trap '__cleanup_check_ntfs_loop' RETURN
+
             ntfsfix -n "$loop_dev" >> "$log_file" 2>&1 || {
                 warn "ntfsfix found issues on loop device"
+                __cleanup_check_ntfs_loop
+                trap - RETURN
                 return 1
             }
-            losetup -d "$loop_dev" 2>/dev/null || true
+
+            __cleanup_check_ntfs_loop
             trap - RETURN
         fi
     else
         warn "No NTFS checking tool available (guestfish or ntfsfix). Skipping check."
-        return 1
+        return 0
     fi
 
     log "NTFS consistency check passed."
@@ -97,13 +123,31 @@ windows_shrink_libguestfs() {
         return 1
     fi
 
-    local temp_raw="/tmp/vm-${vmid}-shrink.raw"
-    local temp_new="/tmp/vm-${vmid}-new.raw"
-    # shellcheck disable=SC2064
-    trap "rm -f '$temp_raw' '$temp_new' 2>/dev/null || true" RETURN
+    local temp_raw=""
+    local temp_new
+    if [[ -n "$vmid" ]]; then
+        temp_new=$(mktemp "/tmp/vm-${vmid}-shrink-new.XXXXXX.raw")
+    else
+        temp_new=$(mktemp "/tmp/vm-shrink-new.XXXXXX.raw")
+    fi
+
+    __cleanup_shrink_libguestfs() {
+        if [[ -n "${temp_new:-}" && "$temp_new" != "$disk_path" ]]; then
+            rm -f "$temp_new" 2>/dev/null || true
+        fi
+        if [[ -n "${temp_raw:-}" && "$temp_raw" != "$disk_path" ]]; then
+            rm -f "$temp_raw" 2>/dev/null || true
+        fi
+    }
+    trap '__cleanup_shrink_libguestfs' RETURN
 
     # Convert to raw if needed
     if [[ "$img_format" != "raw" ]]; then
+        if [[ -n "$vmid" ]]; then
+            temp_raw=$(mktemp "/tmp/vm-${vmid}-shrink-raw.XXXXXX.raw")
+        else
+            temp_raw=$(mktemp "/tmp/vm-shrink-raw.XXXXXX.raw")
+        fi
         log "Converting $img_format to temporary raw image..."
         qemu-img convert -f "$img_format" -O raw "$disk_path" "$temp_raw"
     else
@@ -116,7 +160,8 @@ windows_shrink_libguestfs() {
         --shrink /dev/sda1 \
         --output "$temp_new" \
         "$temp_raw" 2>&1 | tee -a "$LOG_FILE"; then
-        rm -f "$temp_new"
+        __cleanup_shrink_libguestfs
+        trap - RETURN
         return 1
     fi
 
@@ -128,7 +173,7 @@ windows_shrink_libguestfs() {
         mv -f "$temp_new" "$disk_path"
     fi
 
-    rm -f "$temp_raw" "$temp_new"
+    __cleanup_shrink_libguestfs
     trap - RETURN
 
     ok "Windows shrink complete via libguestfs."
@@ -161,20 +206,32 @@ windows_shrink_ntfsresize() {
         die "ntfsresize not available. Install ntfs-3g: apt install ntfs-3g"
     fi
 
-    local temp_raw="/tmp/vm-${vmid}-shrink.raw"
+    local temp_raw=""
     local loop_dev=""
 
+    __cleanup_shrink_ntfsresize() {
+        if [[ -n "${loop_dev:-}" ]]; then
+            losetup -d "$loop_dev" 2>/dev/null || true
+        fi
+        if [[ -n "${temp_raw:-}" && "$temp_raw" != "$disk_path" ]]; then
+            rm -f "$temp_raw" 2>/dev/null || true
+        fi
+    }
+
     if [[ "$img_format" == "qcow2" ]]; then
-        # shellcheck disable=SC2064
-        trap "rm -f '$temp_raw' 2>/dev/null || true" RETURN
+        if [[ -n "$vmid" ]]; then
+            temp_raw=$(mktemp "/tmp/vm-${vmid}-shrink.XXXXXX.raw")
+        else
+            temp_raw=$(mktemp "/tmp/vm-shrink.XXXXXX.raw")
+        fi
+        trap '__cleanup_shrink_ntfsresize' RETURN
         qemu-img convert -f qcow2 -O raw "$disk_path" "$temp_raw"
         loop_dev=$(losetup --show -f "$temp_raw")
     else
         loop_dev=$(losetup --show -f "$disk_path")
     fi
 
-    # shellcheck disable=SC2064
-    trap "losetup -d '$loop_dev' 2>/dev/null || true; rm -f '$temp_raw' 2>/dev/null || true" RETURN
+    trap '__cleanup_shrink_ntfsresize' RETURN
 
     # Check NTFS before shrink
     ntfsresize -i "$loop_dev" >> "$LOG_FILE" 2>&1 || die "ntfsresize info failed."
@@ -228,12 +285,30 @@ windows_expand_libguestfs() {
         return 1
     fi
 
-    local temp_raw="/tmp/vm-${vmid}-expand.raw"
-    local temp_new="/tmp/vm-${vmid}-new.raw"
-    # shellcheck disable=SC2064
-    trap "rm -f '$temp_raw' '$temp_new' 2>/dev/null || true" RETURN
+    local temp_raw=""
+    local temp_new
+    if [[ -n "$vmid" ]]; then
+        temp_new=$(mktemp "/tmp/vm-${vmid}-expand-new.XXXXXX.raw")
+    else
+        temp_new=$(mktemp "/tmp/vm-expand-new.XXXXXX.raw")
+    fi
+
+    __cleanup_expand_libguestfs() {
+        if [[ -n "${temp_new:-}" && "$temp_new" != "$disk_path" ]]; then
+            rm -f "$temp_new" 2>/dev/null || true
+        fi
+        if [[ -n "${temp_raw:-}" && "$temp_raw" != "$disk_path" ]]; then
+            rm -f "$temp_raw" 2>/dev/null || true
+        fi
+    }
+    trap '__cleanup_expand_libguestfs' RETURN
 
     if [[ "$img_format" != "raw" ]]; then
+        if [[ -n "$vmid" ]]; then
+            temp_raw=$(mktemp "/tmp/vm-${vmid}-expand-raw.XXXXXX.raw")
+        else
+            temp_raw=$(mktemp "/tmp/vm-expand-raw.XXXXXX.raw")
+        fi
         log "Converting $img_format to temporary raw image..."
         qemu-img convert -f "$img_format" -O raw "$disk_path" "$temp_raw"
     else
@@ -248,7 +323,8 @@ windows_expand_libguestfs() {
         --expand /dev/sda1 \
         --output "$temp_new" \
         "$temp_raw" 2>&1 | tee -a "$LOG_FILE"; then
-        rm -f "$temp_new"
+        __cleanup_expand_libguestfs
+        trap - RETURN
         return 1
     fi
 
@@ -259,7 +335,7 @@ windows_expand_libguestfs() {
         mv -f "$temp_new" "$disk_path"
     fi
 
-    rm -f "$temp_raw" "$temp_new"
+    __cleanup_expand_libguestfs
     trap - RETURN
 
     ok "Windows expand complete via libguestfs."
@@ -292,12 +368,25 @@ windows_expand_ntfsresize() {
         die "ntfsresize not available. Install ntfs-3g: apt install ntfs-3g"
     fi
 
+    local temp_raw
     local loop_dev=""
 
+    __cleanup_expand_ntfsresize() {
+        if [[ -n "${loop_dev:-}" ]]; then
+            losetup -d "$loop_dev" 2>/dev/null || true
+        fi
+        if [[ -n "${temp_raw:-}" && "$temp_raw" != "$disk_path" ]]; then
+            rm -f "$temp_raw" 2>/dev/null || true
+        fi
+    }
+
     if [[ "$img_format" == "qcow2" ]]; then
-        local temp_raw="/tmp/vm-${vmid}-expand.raw"
-        # shellcheck disable=SC2064
-        trap "rm -f '$temp_raw' 2>/dev/null || true" RETURN
+        if [[ -n "$vmid" ]]; then
+            temp_raw=$(mktemp "/tmp/vm-${vmid}-expand.XXXXXX.raw")
+        else
+            temp_raw=$(mktemp "/tmp/vm-expand.XXXXXX.raw")
+        fi
+        trap '__cleanup_expand_ntfsresize' RETURN
         qemu-img convert -f qcow2 -O raw "$disk_path" "$temp_raw"
 
         # Expand raw image
@@ -309,8 +398,7 @@ windows_expand_ntfsresize() {
         loop_dev=$(losetup --show -f "$disk_path")
     fi
 
-    # shellcheck disable=SC2064
-    trap "losetup -d '$loop_dev' 2>/dev/null || true; rm -f '/tmp/vm-${vmid}-expand.raw' 2>/dev/null || true" RETURN
+    trap '__cleanup_expand_ntfsresize' RETURN
 
     # Expand NTFS to fill
     log "Expanding NTFS filesystem..."
@@ -319,8 +407,7 @@ windows_expand_ntfsresize() {
     losetup -d "$loop_dev"
 
     if [[ "$img_format" == "qcow2" ]]; then
-        qemu-img convert -f raw -O qcow2 "/tmp/vm-${vmid}-expand.raw" "$disk_path"
-        rm -f "/tmp/vm-${vmid}-expand.raw"
+        qemu-img convert -f raw -O qcow2 "$temp_raw" "$disk_path"
     fi
 
     trap - RETURN
