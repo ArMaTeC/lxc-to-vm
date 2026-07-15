@@ -306,7 +306,8 @@ get_size_recommendation() {
     local used_bytes; used_bytes=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
         --exclude='tmp/*' --exclude='run/*' --exclude='mnt/*' --exclude='media/*' --exclude='lost+found' \
         --exclude='boot/vmlinuz*' --exclude='boot/initr*' --exclude='boot/grub*' --exclude='boot/efi/*' \
-        --exclude='lib/modules/*' "${mount_point}/" 2>/dev/null | awk '{print $1}')
+        --exclude='lib/modules/*' --exclude='var/lib/docker/*' --exclude='var/lib/containerd/*' --exclude='var/lib/containers/*' \
+        "${mount_point}/" 2>/dev/null | awk '{print $1}')
     local used_mb=$(( ${used_bytes:-0} / 1024 / 1024 ))
     local used_gb=$(( (used_mb + 1023) / 1024 ))
     local recommended=$((used_gb + 2))
@@ -840,6 +841,7 @@ do_conversion() {
         --exclude='/boot/efi/*' --exclude='/boot/loader/*' \
         --exclude='/boot/System.map*' --exclude='/boot/config-*' \
         --exclude='/lib/modules/*' --exclude='/var/lib/dkms/*' \
+        --exclude='/var/lib/docker/*' --exclude='/var/lib/containerd/*' --exclude='/var/lib/containers/*' \
         "${MOUNT_POINT}/" "${STAGING_DIR}/" || {
         save_resume_state "$VMID" "$CTID" "rsync-failed"; die "Rsync failed. Resume with: $0 -v $VMID -c $CTID --resume"
     }
