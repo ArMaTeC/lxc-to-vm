@@ -34,7 +34,20 @@
 
 ---
 
-## 🚀 Quick Start
+## � Documentation
+
+In addition to the project [Wiki](https://github.com/ArMaTeC/lxc-to-vm/wiki), the
+following documentation is shipped with this repository:
+
+- [`docs/API-Automation.md`](docs/API-Automation.md) — Programmatic control and Proxmox VE API integration.
+- [`docs/Examples.md`](docs/Examples.md) — Usage examples.
+- [`docs/Installation.md`](docs/Installation.md) — Detailed installation instructions.
+- [`docs/Troubleshooting.md`](docs/Troubleshooting.md) — Common issues and fixes.
+- [`docs/Function-Reference.md`](docs/Function-Reference.md) — Complete function reference for all scripts and libraries.
+- [`docs/Internals.md`](docs/Internals.md) — Architecture, data flow, and contributor guide.
+- [`docs/man/`](docs/man/) — Markdown sources for man pages (render with Pandoc).
+
+## �🚀 Quick Start
 
 ### Installation
 

@@ -37,6 +37,8 @@ readonly SKIP_DIRS=(
 # Helper Functions
 # ============================================================================
 
+### Function: usage
+# Display usage information and exit.
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -55,12 +57,23 @@ Exit Codes:
 EOF
 }
 
+### Function: die
+# Print a fatal error message and exit.
+#
+# Arguments:
+#   $1 - Error message.
+#   $2 - Exit code (default: 1).
 die() {
     echo "ERROR: $1" >&2
     log_msg "FATAL: $1"
     exit "${2:-1}"
 }
 
+### Function: log_msg
+# Append a timestamped message to the script log file.
+#
+# Arguments:
+#   $1 - Message text.
 log_msg() {
     local msg="$1"
     local timestamp
@@ -71,7 +84,15 @@ log_msg() {
     fi
 }
 
-# Check if an array contains a value
+### Function: array_contains
+# Check whether a value exists in an array.
+#
+# Arguments:
+#   $1 - Value to search for.
+#   $@ - Array elements (after the value).
+#
+# Returns:
+#   0 if the value is found; 1 otherwise.
 array_contains() {
     local value="$1"
     shift
@@ -81,7 +102,14 @@ array_contains() {
     return 1
 }
 
-# Check if file is binary
+### Function: is_binary
+# Determine whether a file appears to be binary.
+#
+# Arguments:
+#   $1 - Path to the file.
+#
+# Returns:
+#   0 if binary; 1 if text or indeterminate.
 is_binary() {
     local file="$1"
     if command -v file >/dev/null 2>&1; then
@@ -96,7 +124,14 @@ is_binary() {
     return 1
 }
 
-# Determine comment style for a file
+### Function: get_comment_style
+# Determine the appropriate comment style for a file.
+#
+# Arguments:
+#   $1 - Path to the file.
+#
+# Outputs:
+#   "hash", "html", or "none" to stdout.
 get_comment_style() {
     local file="$1"
     local basename_file
@@ -118,10 +153,18 @@ get_comment_style() {
     esac
 }
 
-# Generate a description from filename
-# First, try to extract from existing header comments
-# Second, use hardcoded map for known files
-# Third, generate from filename
+### Function: generate_description
+# Generate a short description string for a file.
+#
+# Arguments:
+#   $1 - Path to the file.
+#
+# Outputs:
+#   Description string to stdout.
+#
+# Notes:
+#   First tries to extract an existing Description field, then falls back to
+#   a hardcoded map of known files, and finally generates one from the filename.
 generate_description() {
     local file="$1"
     local basename_file
@@ -168,7 +211,16 @@ generate_description() {
     esac
 }
 
-# Generate the standard header block
+### Function: generate_header
+# Render the standardized file header block.
+#
+# Arguments:
+#   $1 - Path to the file (used to determine the filename).
+#   $2 - Comment style ("hash" or "html").
+#   $3 - Description text.
+#
+# Outputs:
+#   Header block to stdout.
 generate_header() {
     local file="$1"
     local style="$2"
@@ -197,9 +249,16 @@ EOF
     fi
 }
 
-# Process a single file
-# Returns 0 if file was skipped (already has our header)
-# Returns 1 if file was/would be updated
+### Function: process_file
+# Add or update the standardized header in a single file.
+#
+# Arguments:
+#   $1 - Path to the file.
+#   $2 - Dry-run flag (1 = preview only).
+#   $3 - Check-mode flag (1 = report, do not modify).
+#
+# Returns:
+#   0 if the file was skipped or is up-to-date; 1 if it was/would be updated.
 process_file() {
     local file="$1"
     local dry_run="$2"

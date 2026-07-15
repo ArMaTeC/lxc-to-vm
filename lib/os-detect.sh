@@ -9,9 +9,23 @@
 
 set -Eeuo pipefail
 
-# ------------------------------------------------------------------------------
-# OS Detection from Disk Image
-# ------------------------------------------------------------------------------
+### Function: detect_os_from_disk
+# Detect the operating system installed on a disk image.
+#
+# Arguments:
+#   $1 - Path to the disk image to inspect.
+#   $2 - Disk image format (default: "raw").
+#
+# Globals (set by this function):
+#   OS_TYPE             - "windows", "linux", or "unknown".
+#   OS_DISTRO           - Distribution name (e.g., "windows") or "unknown".
+#   OS_VERSION          - OS version string when available.
+#   OS_BOOT_MODE        - "uefi", "bios", or "unknown".
+#   OS_PARTITION_TABLE  - "gpt", "mbr", or "unknown".
+#   OS_HAS_ESP          - "true" if an EFI System Partition is present.
+#
+# Returns:
+#   0 if detection succeeded, 1 if the OS could not be identified.
 detect_os_from_disk() {
     local disk_path="$1"
     local img_format="${2:-raw}"
@@ -35,9 +49,19 @@ detect_os_from_disk() {
     return 1
 }
 
-# ------------------------------------------------------------------------------
-# libguestfs-based detection (most reliable)
-# ------------------------------------------------------------------------------
+### Function: _detect_via_guestfs
+# Internal helper that detects OS details using virt-inspector (libguestfs).
+#
+# Arguments:
+#   $1 - Path to the disk image.
+#   $2 - Disk image format (default: "raw").
+#
+# Globals (set by this function):
+#   OS_TYPE, OS_DISTRO, OS_VERSION, OS_BOOT_MODE,
+#   OS_PARTITION_TABLE, OS_HAS_ESP
+#
+# Returns:
+#   0 if libguestfs inspection succeeded and produced usable output, 1 otherwise.
 _detect_via_guestfs() {
     local disk_path="$1"
     local img_format="${2:-raw}"
@@ -87,9 +111,18 @@ _detect_via_guestfs() {
     return 0
 }
 
-# ------------------------------------------------------------------------------
-# Fallback: partition type heuristics
-# ------------------------------------------------------------------------------
+### Function: _detect_via_partition_types
+# Internal fallback that detects OS details from partition table heuristics.
+#
+# Arguments:
+#   $1 - Path to the disk image.
+#
+# Globals (set by this function):
+#   OS_TYPE, OS_DISTRO, OS_BOOT_MODE,
+#   OS_PARTITION_TABLE, OS_HAS_ESP
+#
+# Returns:
+#   0 on success (even if OS_TYPE remains "unknown"), 1 if fdisk/parted unavailable.
 _detect_via_partition_types() {
     local disk_path="$1"
     local fdisk_out=""

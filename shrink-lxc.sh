@@ -42,7 +42,11 @@ fi
 # Debug logging function - outputs detailed information when DEBUG=1
 # Arguments:
 #   $* - Debug message to display
-# Outputs: Debug text to stdout (only if DEBUG=1)
+### Function: debug
+# Print a debug message to stderr (if DEBUG=1) and the log file.
+#
+# Arguments:
+#   $* - Debug message.
 debug() {
     if [[ "$DEBUG" -eq 1 ]]; then
         echo -e "${BLUE}[DEBUG]${NC} $*" >&2
@@ -50,10 +54,11 @@ debug() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $*" >> "$LOG_FILE"
 }
 
-# Verbose logging function - always logs to file, optionally to console
-# Provides detailed step-by-step progress information
+### Function: verbose
+# Print a verbose message to the log file, optionally to stdout.
+#
 # Arguments:
-#   $* - Verbose message to log
+#   $* - Verbose message.
 verbose() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [VERBOSE] $*" >> "$LOG_FILE"
     if [[ "$DEBUG" -eq 1 ]]; then
@@ -99,34 +104,37 @@ e() { echo -e "$*"; }
 # All logging functions write to both stdout (for user) and log file (for records)
 # This ensures complete audit trail of all operations
 
-# Standard info log - blue [*] prefix
-# Arguments: $* - Message to log
-# Side effects: Appends timestamped message to $LOG_FILE
+### Function: log
+# Print an info message to stdout and append it to the log file.
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
-# Warning log - yellow [!] prefix, continues execution
-# Use when something unexpected happened but we can proceed
-# Arguments: $* - Warning message
+### Function: warn
+# Print a warning message to stdout and the log file.
 warn() { printf "${YELLOW}[!]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
-# Error log - red [✗] prefix, goes to stderr
-# Use when an error occurs but we're not exiting yet
-# Arguments: $* - Error message
-# Outputs: To stderr and log file
+### Function: err
+# Print an error message to stderr and the log file.
 err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
 
-# Success/OK log - green [✓] prefix
-# Use to confirm operations completed successfully
-# Arguments: $* - Success message
+### Function: ok
+# Print a success message to stdout and the log file.
 ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
-# Fatal error exit function
-# Prints error message and exits with E_INVALID_ARG (1)
-# Arguments: $* - Error message to display
-# Exits: Always exits with code 1
+### Function: die
+# Print an error message and exit with E_INVALID_ARG.
+#
+# Arguments:
+#   $* - Error message.
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
 
-# Map failed command to likely root cause + actionable fix
+### Function: error_reason_and_fix
+# Map a failed command to a human-readable reason and fix suggestion.
+#
+# Arguments:
+#   $1 - Failed command string.
+#
+# Outputs:
+#   "reason|fix" string to stdout.
 error_reason_and_fix() {
     local failed_cmd="$1"
     local reason="Command failed during shrink workflow."
@@ -162,7 +170,14 @@ error_reason_and_fix() {
     printf '%s|%s\n' "$reason" "$fix"
 }
 
-# Map failed command to a stable script exit code for automation
+### Function: error_exit_code
+# Map a failed command to a stable exit code for automation.
+#
+# Arguments:
+#   $1 - Failed command string.
+#
+# Outputs:
+#   Exit code to stdout.
 error_exit_code() {
     local failed_cmd="$1"
 
@@ -182,7 +197,11 @@ error_exit_code() {
     esac
 }
 
-# Global ERR trap for actionable diagnostics
+### Function: on_error
+# Global ERR trap that prints diagnostics and exits with a mapped code.
+#
+# Side effects:
+#   Logs the failure reason, fix suggestion, and log tail; then exits.
 on_error() {
     local exit_code=$?
     local line_no="${BASH_LINENO[0]:-unknown}"
@@ -209,9 +228,8 @@ on_error() {
 
 trap 'on_error' ERR
 
-# --- Usage / Help ---
-# Shows comprehensive help when -h or --help is requested
-# Includes all available options with examples
+### Function: usage
+# Display usage/help text and exit.
 usage() {
     cat <<USAGE
 ${BOLD}Proxmox LXC Disk Shrinker v${VERSION}${NC}

@@ -14,9 +14,18 @@ set -Eeuo pipefail
 # ------------------------------------------------------------------------------
 readonly WINDOWS_MIN_DISK_GB=30
 
-# ------------------------------------------------------------------------------
-# NTFS Consistency Check
-# ------------------------------------------------------------------------------
+### Function: windows_check_ntfs
+# Check NTFS consistency on a disk image or block device.
+#
+# Arguments:
+#   $1 - Path to the disk image or block device.
+#   $2 - Log file path (default: /var/log/windows-disk.log).
+#
+# Outputs:
+#   Messages to stdout/log via log/warn functions.
+#
+# Returns:
+#   0 if the NTFS check passed or was skipped, 1 if issues were found.
 windows_check_ntfs() {
     local disk_path="$1"
     local log_file="${2:-/var/log/windows-disk.log}"
@@ -61,9 +70,20 @@ windows_check_ntfs() {
     return 0
 }
 
-# ------------------------------------------------------------------------------
-# Shrink: libguestfs path
-# ------------------------------------------------------------------------------
+### Function: windows_shrink_libguestfs
+# Shrink a Windows disk image to a target size using virt-resize (libguestfs).
+#
+# Arguments:
+#   $1 - Path to the source disk image.
+#   $2 - Target size in GiB.
+#   $3 - Disk image format (default: "raw").
+#   $4 - Optional VMID used to name temporary files.
+#
+# Outputs:
+#   Progress messages and virt-resize output.
+#
+# Returns:
+#   0 on success, 1 if virt-resize is unavailable or the operation fails.
 windows_shrink_libguestfs() {
     local disk_path="$1"
     local new_size_gb="$2"
@@ -115,9 +135,20 @@ windows_shrink_libguestfs() {
     return 0
 }
 
-# ------------------------------------------------------------------------------
-# Shrink: ntfsresize fallback path
-# ------------------------------------------------------------------------------
+### Function: windows_shrink_ntfsresize
+# Shrink a Windows disk image using ntfsresize as a fallback.
+#
+# Arguments:
+#   $1 - Path to the source disk image.
+#   $2 - Target size in GiB.
+#   $3 - Disk image format (default: "raw").
+#   $4 - Optional VMID used to name temporary files.
+#
+# Outputs:
+#   Progress messages and ntfsresize output.
+#
+# Returns:
+#   0 on success, exits via die() on critical errors.
 windows_shrink_ntfsresize() {
     local disk_path="$1"
     local new_size_gb="$2"
@@ -170,9 +201,20 @@ windows_shrink_ntfsresize() {
     return 0
 }
 
-# ------------------------------------------------------------------------------
-# Expand: libguestfs path
-# ------------------------------------------------------------------------------
+### Function: windows_expand_libguestfs
+# Expand a Windows disk image to a target size using virt-resize (libguestfs).
+#
+# Arguments:
+#   $1 - Path to the source disk image.
+#   $2 - Target size in GiB.
+#   $3 - Disk image format (default: "raw").
+#   $4 - Optional VMID used to name temporary files.
+#
+# Outputs:
+#   Progress messages and virt-resize output.
+#
+# Returns:
+#   0 on success, 1 if virt-resize is unavailable or the operation fails.
 windows_expand_libguestfs() {
     local disk_path="$1"
     local new_size_gb="$2"
@@ -224,9 +266,20 @@ windows_expand_libguestfs() {
     return 0
 }
 
-# ------------------------------------------------------------------------------
-# Expand: ntfsresize fallback path
-# ------------------------------------------------------------------------------
+### Function: windows_expand_ntfsresize
+# Expand a Windows disk image using ntfsresize as a fallback.
+#
+# Arguments:
+#   $1 - Path to the source disk image.
+#   $2 - Target size in GiB.
+#   $3 - Disk image format (default: "raw").
+#   $4 - Optional VMID used to name temporary files.
+#
+# Outputs:
+#   Progress messages and ntfsresize output.
+#
+# Returns:
+#   0 on success, exits via die() on critical errors.
 windows_expand_ntfsresize() {
     local disk_path="$1"
     local new_size_gb="$2"
@@ -275,9 +328,20 @@ windows_expand_ntfsresize() {
     return 0
 }
 
-# ------------------------------------------------------------------------------
-# Clone Disk for Windows VMs
-# ------------------------------------------------------------------------------
+### Function: windows_clone_disk
+# Clone a Windows disk to a new image, optionally expanding it.
+#
+# Arguments:
+#   $1 - Path to the source disk image.
+#   $2 - Path to the target disk image.
+#   $3 - Optional target size in GiB (empty means keep size).
+#   $4 - Disk image format (default: "raw").
+#
+# Outputs:
+#   Progress messages and virt-resize/qemu-img output.
+#
+# Returns:
+#   0 on success, exits via die() on critical errors.
 windows_clone_disk() {
     local source_disk="$1"
     local target_disk="$2"

@@ -374,12 +374,15 @@ fi
 mkdir -p "$(dirname "$LOG_FILE")"
 echo "--- lxc-to-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
-# --- Dependency installer ---
-# Automatically installs missing packages via apt
+### Function: ensure_dependency
+# Verify a command is available, installing its package via apt if missing.
+#
 # Arguments:
-#   $1 - Command name to check for
-#   $2 - Package name (optional, defaults to command name)
-# Side effects: May run apt-get update and install
+#   $1 - Command name to check for.
+#   $2 - Package name (optional, defaults to $1).
+#
+# Side effects:
+#   Runs `apt-get update` and `apt-get install` when the command is missing.
 ensure_dependency() {
     local cmd="$1"
     local pkg="${2:-$1}"  # Package name can differ from command name (e.g., cmd=parted, pkg=parted)
@@ -448,8 +451,14 @@ cleanup() {
     fi
 }
 
-# Register cleanup to run automatically on script exit or interruption
-# This ensures no resources are leaked even if script fails
+### Function: cleanup
+# Release all resources on script exit or interruption.
+#
+# Side effects:
+#   Unmounts filesystems, detaches loop devices, deletes temporary directories,
+#   and unmounts the source container if still mounted.
+# Notes:
+#   Registered with `trap cleanup EXIT INT TERM`.
 trap cleanup EXIT INT TERM
 
 # ==============================================================================
@@ -458,11 +467,17 @@ trap cleanup EXIT INT TERM
 # These functions enable remote cluster operations via Proxmox API
 # Allows running conversions from any cluster node, with auto-migration
 
-# Check if we're in a cluster and get node info
+### Function: get_cluster_info
+# Locate the Proxmox node that hosts a container.
+#
 # Arguments:
-#   $1 - Container ID to locate
-# Returns: Node name via stdout, or 1 if not found
-# Uses: pvesh to query cluster status
+#   $1 - Container ID to locate.
+#
+# Outputs:
+#   Node name to stdout when found.
+#
+# Returns:
+#   0 and prints the node name if found; 1 otherwise.
 get_cluster_info() {
     local ctid="$1"
     local config_output
@@ -498,7 +513,22 @@ get_cluster_info() {
     return 1
 }
 
-# API call wrapper for Proxmox cluster operations
+### Function: pve_api_call
+# Perform an authenticated HTTP request against the Proxmox VE API.
+#
+# Arguments:
+#   $1 - HTTP method (e.g., GET, POST).
+#   $2 - API endpoint path (e.g., /nodes).
+#   $3 - Request body or form data (optional).
+#
+# Globals:
+#   API_HOST, API_TOKEN, API_USER - API credentials set from CLI options.
+#
+# Outputs:
+#   API response body to stdout.
+#
+# Returns:
+#   0; exits via die() if API credentials are not configured.
 pve_api_call() {
     local method="$1"
     local endpoint="$2"
@@ -519,11 +549,17 @@ pve_api_call() {
     fi
 }
 
-# Migrate container to local node from remote cluster node
-# This enables running conversions from any cluster node
+### Function: migrate_container_to_local
+# Migrate a container from a remote Proxmox cluster node to the local node.
+#
 # Arguments:
-#   $1 - Container ID to migrate
-# Side effects: May stop and migrate container, modifying cluster state
+#   $1 - Container ID to migrate.
+#
+# Side effects:
+#   May stop the container and run `pct migrate`. Modifies cluster state.
+#
+# Returns:
+#   0 on success or if already local; 1 if remote and --migrate-to-local is false.
 migrate_container_to_local() {
     local ctid="$1"
     local target_node
@@ -580,14 +616,19 @@ migrate_container_to_local() {
 # Directory where hook scripts are stored
 HOOKS_DIR="/var/lib/lxc-to-vm/hooks"
 
-# Execute a hook script if it exists and is executable
+### Function: run_hook
+# Execute a user-supplied hook script for a given conversion stage.
+#
 # Arguments:
-#   $1 - Hook name (e.g., pre-convert, post-convert)
-#   $2 - Container ID (optional, defaults to $CTID)
-#   $3 - VM ID (optional, defaults to $VMID)
-# Environment variables exported to hook:
+#   $1 - Hook name (e.g., pre-convert, post-convert).
+#   $2 - Container ID (optional, defaults to $CTID).
+#   $3 - VM ID (optional, defaults to $VMID).
+#
+# Environment variables exported to the hook:
 #   HOOK_CTID, HOOK_VMID, HOOK_LOG_FILE, HOOK_STAGE
-# Returns: 0 on success or if hook doesn't exist, 1 if hook failed
+#
+# Returns:
+#   0 on success or if the hook does not exist; 1 if the hook exits non-zero.
 run_hook() {
     local hook_name="$1"
     local ctid="${2:-$CTID}"
@@ -626,12 +667,18 @@ run_hook() {
 # disk sizes with confidence intervals. Helps prevent both over-allocation
 # and under-allocation of VM disk space.
 
-# Analyze historical growth patterns from log data
+### Function: analyze_growth_pattern
+# Analyze historical disk-usage log data to recommend a VM disk size.
+#
 # Arguments:
-#   $1 - Container ID to analyze
-#   $2 - Days of history to analyze (default: 30)
-# Returns: Colon-separated fields: recommended:confidence:trend:min:max:avg
-#   or exits with 1 if insufficient data available
+#   $1 - Container ID to analyze.
+#   $2 - Days of history to analyze (default: 30).
+#
+# Outputs:
+#   Colon-separated fields: recommended:confidence:trend:min:max:avg.
+#
+# Returns:
+#   0 on success; 1 if insufficient historical data is available.
 analyze_growth_pattern() {
     local ctid="$1"
     local days_history="${2:-30}"
@@ -692,11 +739,17 @@ analyze_growth_pattern() {
     return 0
 }
 
-# Get disk size recommendation with user-friendly output
-# Falls back to simple heuristic if historical data unavailable
+### Function: get_size_recommendation
+# Display and return a disk-size recommendation for a container.
+#
 # Arguments:
-#   $1 - Container ID to analyze
-# Outputs: Displays analysis summary and returns recommended size via stdout
+#   $1 - Container ID to analyze.
+#
+# Outputs:
+#   Analysis summary to stdout; recommended size in GB to stdout as the final line.
+#
+# Returns:
+#   0; falls back to a simple heuristic if no historical data exists.
 get_size_recommendation() {
     local ctid="$1"
     
@@ -748,15 +801,17 @@ get_size_recommendation() {
 # Profiles store settings like storage, disk format, bridge, etc.
 # This allows quick reuse of common configurations without retyping
 
-# Directory where profile files are stored
-PROFILE_DIR="/var/lib/lxc-to-vm/profiles"
-
-# Ensure profile directory exists
+### Function: ensure_profile_dir
+# Ensure the profile directory exists, exiting on failure.
 ensure_profile_dir() {
     mkdir -p "$PROFILE_DIR" 2>/dev/null || die "Cannot create profile directory: $PROFILE_DIR"
 }
 
-# List all saved profiles with creation dates
+### Function: list_profiles
+# List all saved conversion profiles with creation dates.
+#
+# Side effects:
+#   Prints the profile list to stdout and exits the script.
 list_profiles() {
     ensure_profile_dir
     e "${BOLD}Available profiles:${NC}"
@@ -772,10 +827,14 @@ list_profiles() {
     exit 0
 }
 
-# Save current settings as a named profile
+### Function: save_profile
+# Save the current option set as a named profile.
+#
 # Arguments:
-#   $1 - Profile name
-# Creates: $PROFILE_DIR/$name.conf with saved settings
+#   $1 - Profile name.
+#
+# Side effects:
+#   Creates or overwrites `$PROFILE_DIR/<name>.conf`.
 save_profile() {
     local name="$1"
     ensure_profile_dir
@@ -799,11 +858,17 @@ PROFILE_EOF
     ok "Profile '${name}' saved to $profile_file"
 }
 
-# Load settings from a named profile
+### Function: load_profile
+# Load a named profile, applying its saved settings.
+#
 # Arguments:
-#   $1 - Profile name
-# Side effects: Sources the profile file, setting global variables
-# Note: Only sets values that aren't already defined (CLI takes precedence)
+#   $1 - Profile name.
+#
+# Side effects:
+#   Sources the profile file into the current shell. CLI values take precedence.
+#
+# Returns:
+#   0 on success; exits via die() if the profile is not found.
 load_profile() {
     local name="$1"
     local profile_file="$PROFILE_DIR/${name}.conf"
@@ -833,11 +898,15 @@ load_profile() {
 SNAPSHOT_NAME="pre-conversion-$(date +%Y%m%d-%H%M%S)"
 SNAPSHOT_CREATED=false  # Track if we created a snapshot (for rollback eligibility)
 
-# Create a snapshot of the container before conversion
+### Function: create_snapshot
+# Create an LXC snapshot before conversion for rollback safety.
+#
 # Arguments:
-#   $1 - Container ID
-# Side effects: Sets SNAPSHOT_CREATED to true on success
-# Note: Snapshot includes container config and rootfs at point-in-time
+#   $1 - Container ID.
+#
+# Side effects:
+#   Sets `SNAPSHOT_CREATED` to true on success; logs on failure.
+#   Creates a snapshot named `$SNAPSHOT_NAME` on the container.
 create_snapshot() {
     local ctid="$1"
     log "Creating snapshot '${SNAPSHOT_NAME}' for container $ctid..."
@@ -850,10 +919,14 @@ create_snapshot() {
     fi
 }
 
-# Rollback container to snapshot (called on conversion failure)
+### Function: rollback_snapshot
+# Roll an LXC container back to the pre-conversion snapshot on failure.
+#
 # Arguments:
-#   $1 - Container ID
-# Side effects: Restores container to snapshot state and removes snapshot
+#   $1 - Container ID.
+#
+# Side effects:
+#   Restores the container to the snapshot state and removes the snapshot.
 rollback_snapshot() {
     local ctid="$1"
     if $SNAPSHOT_CREATED; then
@@ -870,9 +943,11 @@ rollback_snapshot() {
     fi
 }
 
-# Remove snapshot after successful conversion
+### Function: remove_snapshot
+# Remove the pre-conversion snapshot after a successful conversion.
+#
 # Arguments:
-#   $1 - Container ID
+#   $1 - Container ID.
 remove_snapshot() {
     local ctid="$1"
     if $SNAPSHOT_CREATED; then
@@ -893,29 +968,38 @@ RESUME_DIR="/var/lib/lxc-to-vm/resume"
 RESUME_STATE_FILE=""  # Path to current conversion's state file
 RSYNC_PARTIAL_DIR=""  # Path to rsync partial data directory
 
-# Create resume directory if it doesn't exist
+### Function: ensure_resume_dir
+# Ensure the resume-state directory exists, exiting on failure.
 ensure_resume_dir() {
     mkdir -p "$RESUME_DIR" 2>/dev/null || die "Cannot create resume directory: $RESUME_DIR"
 }
 
-# Get path to resume state file for a specific CT→VM conversion
+### Function: get_resume_file
+# Return the resume-state file path for a CT→VM conversion.
+#
 # Arguments:
-#   $1 - Container ID
-#   $2 - VM ID
-# Returns: Path to state file via stdout
+#   $1 - Container ID.
+#   $2 - VM ID.
+#
+# Outputs:
+#   Resume state file path to stdout.
 get_resume_file() {
     local ctid="$1"
     local vmid="$2"
     echo "$RESUME_DIR/ct${ctid}-vm${vmid}.state"
 }
 
-# Save current conversion state to file
+### Function: save_resume_state
+# Persist conversion state so an interrupted run can be resumed.
+#
 # Arguments:
-#   $1 - Container ID
-#   $2 - VM ID  
-#   $3 - Current stage name (e.g., "rsync-failed", "disk-created")
-#   $4 - Additional data (optional)
-# Creates: State file with all conversion parameters
+#   $1 - Container ID.
+#   $2 - VM ID.
+#   $3 - Current stage name (e.g., "rsync-failed", "disk-created").
+#   $4 - Additional data (optional).
+#
+# Side effects:
+#   Creates or overwrites the resume state file for the CT/VM pair.
 save_resume_state() {
     local ctid="$1"
     local vmid="$2"
@@ -936,11 +1020,12 @@ DATA="$data"
 RESUME_EOF
 }
 
-# Clear resume state after successful conversion
+### Function: clear_resume_state
+# Remove resume state and any partial rsync data after a successful conversion.
+#
 # Arguments:
-#   $1 - Container ID
-#   $2 - VM ID
-# Side effects: Removes state file and partial rsync data
+#   $1 - Container ID.
+#   $2 - VM ID.
 clear_resume_state() {
     local ctid="$1"
     local vmid="$2"
@@ -950,11 +1035,18 @@ clear_resume_state() {
     [[ -n "$RSYNC_PARTIAL_DIR" && -d "$RSYNC_PARTIAL_DIR" ]] && rm -rf "$RSYNC_PARTIAL_DIR" 2>/dev/null || true
 }
 
-# Check for existing resume state
+### Function: check_resume_state
+# Load an existing resume state for a CT→VM conversion if present.
+#
 # Arguments:
-#   $1 - Container ID
-#   $2 - VM ID
-# Returns: 0 if state exists (loads variables), 1 if no state
+#   $1 - Container ID.
+#   $2 - VM ID.
+#
+# Side effects:
+#   Sources the state file, populating `STAGE`, `TIMESTAMP`, `IMAGE_FILE`, etc.
+#
+# Returns:
+#   0 if a state file exists and was sourced; 1 otherwise.
 check_resume_state() {
     local ctid="$1"
     local vmid="$2"
@@ -969,10 +1061,14 @@ check_resume_state() {
     return 1
 }
 
-# ==============================================================================
-# BATCH PROCESSING
-# ==============================================================================
-
+### Function: process_batch_file
+# Process a batch file containing CTID/VMID conversion pairs sequentially.
+#
+# Arguments:
+#   $1 - Path to the batch file.
+#
+# Side effects:
+#   Runs `run_single_conversion` for each valid pair and prints a summary.
 process_batch_file() {
     local batch_file="$1"
     [[ -f "$batch_file" ]] || die "Batch file not found: $batch_file"
@@ -1022,6 +1118,14 @@ process_batch_file() {
     exit 0
 }
 
+### Function: process_range
+# Convert a range of containers to a corresponding range of VMs.
+#
+# Arguments:
+#   $1 - Range specification in the form `START-END:START-END`.
+#
+# Side effects:
+#   Runs `run_single_conversion` for each pair in the range and prints a summary.
 process_range() {
     local range_spec="$1"
     # Format: 100-110:200-210 (CT range : VM range)
@@ -1073,10 +1177,18 @@ process_range() {
     exit 0
 }
 
-# ==============================================================================
-# SINGLE CONVERSION WRAPPER
-# ==============================================================================
-
+### Function: run_single_conversion
+# Orchestrate one LXC→VM conversion from validation through cleanup.
+#
+# Arguments:
+#   $1 - Source container ID.
+#   $2 - Target VM ID.
+#
+# Side effects:
+#   Creates snapshots, runs the conversion, and optionally destroys the source.
+#
+# Returns:
+#   0 on success; 1 on failure.
 run_single_conversion() {
     local single_ctid="$1"
     local single_vmid="$2"
@@ -1247,7 +1359,13 @@ fi
 
 WIZARD_LOG="/var/log/lxc-to-vm-wizard.log"
 
-# Progress bar function
+### Function: show_progress
+# Render a progress bar for long-running operations.
+#
+# Arguments:
+#   $1 - Current progress value.
+#   $2 - Total progress value.
+#   $3 - Label to display (default: "Progress").
 show_progress() {
     local current="$1"
     local total="$2"
@@ -1265,7 +1383,12 @@ show_progress() {
     [[ "$current" -eq "$total" ]] && printf "\n"
 }
 
-# Spinner for indeterminate operations
+### Function: spinner
+# Render a spinner while a background process is running.
+#
+# Arguments:
+#   $1 - PID of the background process to watch.
+#   $2 - Label to display.
 spinner() {
     local pid="$1"
     local label="$2"
@@ -1279,7 +1402,11 @@ spinner() {
     printf "\r${GREEN}[✓]${NC} %s\n" "$label"
 }
 
-# Run wizard mode
+### Function: run_wizard
+# Interactive TUI wizard that prompts for conversion options.
+#
+# Side effects:
+#   Sets global option variables from user input.
 run_wizard() {
     echo ""
     e "${BOLD}==========================================${NC}"
@@ -1367,6 +1494,17 @@ run_wizard() {
 # PRE-FLIGHT VALIDATION
 # ==============================================================================
 
+### Function: run_preflight_validation
+# Validate that a container is ready for conversion.
+#
+# Arguments:
+#   $1 - Container ID to validate (defaults to $CTID).
+#
+# Outputs:
+#   Pass/warn/fail messages for each check.
+#
+# Returns:
+#   0 if all checks passed; 1 otherwise.
 run_preflight_validation() {
     local check_ctid="${1:-$CTID}"
     [[ -z "$check_ctid" ]] && die "Container ID required for validation"
@@ -1497,6 +1635,15 @@ run_preflight_validation() {
 # PARALLEL BATCH PROCESSING
 # ==============================================================================
 
+### Function: process_batch_parallel
+# Process a batch file of CTID/VMID pairs in parallel.
+#
+# Arguments:
+#   $1 - Path to the batch file.
+#   $2 - Maximum number of parallel jobs (default: 1).
+#
+# Side effects:
+#   Runs `run_single_conversion` in background subshells and waits for completion.
 process_batch_parallel() {
     local batch_file="$1"
     local max_jobs="${2:-1}"
@@ -1560,6 +1707,15 @@ process_batch_parallel() {
 # CLOUD/STORAGE EXPORT
 # ==============================================================================
 
+### Function: export_vm_disk
+# Export a converted VM disk to S3, NFS, SSH, or a local destination.
+#
+# Arguments:
+#   $1 - VM ID whose disk should be exported.
+#   $2 - Destination URI or path.
+#
+# Returns:
+#   0 if no export requested; otherwise 0/1 depending on the transport.
 export_vm_disk() {
     local vmid="$1"
     local dest="$2"
@@ -1605,6 +1761,11 @@ export_vm_disk() {
 # VM TEMPLATE CREATION
 # ==============================================================================
 
+### Function: convert_to_template
+# Stop a VM, optionally run sysprep, and convert it to a Proxmox template.
+#
+# Arguments:
+#   $1 - VM ID to convert.
 convert_to_template() {
     local vmid="$1"
     log "Converting VM $vmid to template..."
@@ -1623,6 +1784,14 @@ convert_to_template() {
     qm template "$vmid" >> "$LOG_FILE" 2>&1 && ok "VM $vmid converted to template" || warn "Template conversion failed"
 }
 
+### Function: run_sysprep
+# Clean a VM disk to prepare it for cloning as a template.
+#
+# Arguments:
+#   $1 - VM ID to clean.
+#
+# Side effects:
+#   Removes SSH host keys, machine-id, persistent network rules, and logs.
 run_sysprep() {
     local vmid="$1"
     log "Cleaning VM $vmid for cloning (sysprep)..."
@@ -2011,12 +2180,14 @@ fi
 REQUIRED_MB=$(( (DISK_SIZE + 1) * 1024 ))
 DEFAULT_WORK_BASE="/var/lib/vz/dump"
 
-# -----------------------------------------------------------------------------
-# Disk Space Check Function
+### Function: check_space
+# Return the available disk space for a directory in MiB.
+#
 # Arguments:
-#   $1 - Directory to check
-# Returns: Available space in MB via echo
-# -----------------------------------------------------------------------------
+#   $1 - Directory to check.
+#
+# Outputs:
+#   Available space in MB to stdout (defaults to 0 on error).
 check_space() {
     local dir="$1"
     local avail_mb
@@ -2024,10 +2195,17 @@ check_space() {
     echo "${avail_mb:-0}"
 }
 
-# ==============================================================================
-# MAIN CONVERSION FUNCTION
-# ==============================================================================
-
+### Function: pick_work_dir
+# Select a working directory with enough free space for the temporary disk image.
+#
+# Arguments:
+#   $1 - Preferred base directory.
+#
+# Outputs:
+#   Selected directory path to stdout; diagnostic messages to stderr.
+#
+# Returns:
+#   0 on success; exits via die() if no suitable directory is found.
 pick_work_dir() {
     local base="$1"
     local avail_mb
@@ -2111,9 +2289,15 @@ pick_work_dir() {
     echo "$selected_path"
 }
 
-# Start of main conversion workflow
-# This is the core function that performs the actual LXC to VM conversion
-# It is called after all validation and setup is complete
+### Function: do_conversion
+# Perform the core LXC to VM conversion workflow.
+#
+# Side effects:
+#   Creates a disk image, syncs the container filesystem, installs a bootloader,
+#   imports the disk into Proxmox storage, and configures the new VM.
+#
+# Returns:
+#   0 on success; non-zero on failure (cleanup is handled by the EXIT trap).
 do_conversion() {
     # Capture start time for performance metrics
     local conversion_start_time=$(date +%s)
@@ -2953,6 +3137,11 @@ VM_HEALTH_ERRORS=0
 ROOT_RW_CHECK_FAILED=false
 REMOUNT_CHECK_FAILED=false
 
+### Function: collect_vm_diagnostics
+# Collect host-side and guest-side diagnostics for the converted VM.
+#
+# Side effects:
+#   Appends VM status, configuration, and guest exec output to `$LOG_FILE`.
 collect_vm_diagnostics() {
     log "Collecting host-side and guest-side diagnostics for VM $VMID..."
     {
@@ -2978,6 +3167,15 @@ collect_vm_diagnostics() {
     warn "Saved detailed VM diagnostics to $LOG_FILE"
 }
 
+### Function: auto_fix_boot_rw_issue
+# Attempt automatic remediation for a VM that boots with a read-only root fs.
+#
+# Side effects:
+#   Stops the VM, mounts its root disk, adjusts GRUB cmdline, fixes permissions,
+#   runs e2fsck, and restarts the VM.
+#
+# Returns:
+#   0 if remediation succeeded and the VM restarted; 1 otherwise.
 auto_fix_boot_rw_issue() {
     local vm_disk_volid disk_path map_output mapper_name mapper_root
     local fix_mount="/tmp/lxc-to-vm-fix-${VMID}"
@@ -3066,6 +3264,16 @@ chmod 0755 /var/cache/man 2>/dev/null || true
     return 1
 }
 
+### Function: run_check
+# Record the result of a post-conversion health check.
+#
+# Arguments:
+#   $1 - Check name.
+#   $2 - Exit status (0 = pass, non-zero = fail).
+#   $3 - Optional detail text.
+#
+# Side effects:
+#   Updates `CHECKS_PASSED`, `CHECKS_TOTAL`, `VM_HEALTH_ERRORS`, and logs the result.
 run_check() {
     local name="$1"
     local result="$2"  # 0 = pass, non-zero = fail

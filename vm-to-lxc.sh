@@ -209,6 +209,12 @@ fi
 mkdir -p "$(dirname "$LOG_FILE")"
 echo "--- vm-to-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
+### Function: ensure_dependency
+# Verify a command is available, installing its package via apt if missing.
+#
+# Arguments:
+#   $1 - Command name to check for.
+#   $2 - Package name (optional, defaults to $1).
 ensure_dependency() {
     local cmd="$1" pkg="${2:-$1}"
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -219,6 +225,8 @@ ensure_dependency() {
     fi
 }
 
+### Function: cleanup
+# Release all resources on script exit or interruption.
 cleanup() {
     echo ""
     log "Cleaning up resources..."
@@ -240,6 +248,17 @@ trap cleanup EXIT INT TERM
 # PROXMOX API / CLUSTER INTEGRATION
 # ==============================================================================
 
+### Function: get_cluster_info
+# Locate the Proxmox node that hosts a VM.
+#
+# Arguments:
+#   $1 - VM ID to locate.
+#
+# Outputs:
+#   Node name to stdout when found.
+#
+# Returns:
+#   0 and prints the node name if found; 1 otherwise.
 get_cluster_info() {
     local vmid="$1"
     qm config "$vmid" >/dev/null 2>/dev/null || return 1
@@ -252,6 +271,16 @@ get_cluster_info() {
     return 1
 }
 
+### Function: pve_api_call
+# Perform an authenticated HTTP request against the Proxmox VE API.
+#
+# Arguments:
+#   $1 - HTTP method.
+#   $2 - API endpoint path.
+#   $3 - Request body (optional).
+#
+# Returns:
+#   0; exits via die() if API credentials are not configured.
 pve_api_call() {
     local method="$1" endpoint="$2" data="${3:-}"
     [[ -z "$API_HOST" || -z "$API_TOKEN" ]] && die "API credentials not configured."
@@ -261,6 +290,14 @@ pve_api_call() {
     else curl -s -k -H "$auth_header" -X "$method" -d "$data" "$url" 2>/dev/null; fi
 }
 
+### Function: migrate_vm_to_local
+# Migrate a VM from a remote Proxmox cluster node to the local node.
+#
+# Arguments:
+#   $1 - VM ID to migrate.
+#
+# Returns:
+#   0 on success or if already local; 1 if remote and migration not enabled.
 migrate_vm_to_local() {
     local vmid="$1"
     local target_node; target_node=$(get_cluster_info "$vmid") || die "Cannot determine node for VM $vmid"
@@ -285,6 +322,16 @@ migrate_vm_to_local() {
 
 HOOKS_DIR="/var/lib/vm-to-lxc/hooks"
 
+### Function: run_hook
+# Execute a user-supplied hook script for a given conversion stage.
+#
+# Arguments:
+#   $1 - Hook name.
+#   $2 - VM ID (optional, defaults to $VMID).
+#   $3 - Container ID (optional, defaults to $CTID).
+#
+# Returns:
+#   0 on success or if hook does not exist; 1 if hook fails.
 run_hook() {
     local hook_name="$1" vmid="${2:-$VMID}" ctid="${3:-$CTID}"
     local hook_script="${HOOKS_DIR}/${hook_name}"
@@ -300,6 +347,14 @@ run_hook() {
 # PREDICTIVE DISK SIZE ADVISOR
 # ==============================================================================
 
+### Function: get_size_recommendation
+# Analyze a mounted VM filesystem and recommend a target container disk size.
+#
+# Arguments:
+#   $1 - Mount point of the VM root filesystem.
+#
+# Outputs:
+#   Usage summary and recommended size in GB to stdout.
 get_size_recommendation() {
     local mount_point="$1"
     log "Analyzing VM filesystem for disk size recommendation..."
@@ -324,8 +379,12 @@ get_size_recommendation() {
 
 PROFILE_DIR="/var/lib/vm-to-lxc/profiles"
 
+### Function: ensure_profile_dir
+# Ensure the profile directory exists, exiting on failure.
 ensure_profile_dir() { mkdir -p "$PROFILE_DIR" 2>/dev/null || die "Cannot create profile directory: $PROFILE_DIR"; }
 
+### Function: list_profiles
+# List all saved conversion profiles with creation dates.
 list_profiles() {
     ensure_profile_dir; e "${BOLD}Available profiles:${NC}"; local found=false
     for profile in "$PROFILE_DIR"/*.conf; do
@@ -336,6 +395,11 @@ list_profiles() {
     done; $found || echo "  (none)"; exit 0
 }
 
+### Function: save_profile
+# Save the current option set as a named profile.
+#
+# Arguments:
+#   $1 - Profile name.
 save_profile() {
     local name="$1"; ensure_profile_dir
     cat > "$PROFILE_DIR/${name}.conf" <<PROFILE_EOF
@@ -350,6 +414,14 @@ PROFILE_EOF
     ok "Profile '${name}' saved"
 }
 
+### Function: load_profile
+# Load a named profile, applying its saved settings.
+#
+# Arguments:
+#   $1 - Profile name.
+#
+# Returns:
+#   0 on success; exits via die() if the profile is not found.
 load_profile() {
     local name="$1" profile_file="$PROFILE_DIR/${name}.conf"
     [[ -f "$profile_file" ]] || die "Profile '$name' not found."
@@ -363,6 +435,11 @@ load_profile() {
 SNAPSHOT_NAME="pre-conversion-$(date +%Y%m%d-%H%M%S)"
 SNAPSHOT_CREATED=false
 
+### Function: create_snapshot
+# Create a VM snapshot before conversion for rollback safety.
+#
+# Arguments:
+#   $1 - VM ID.
 create_snapshot() {
     local vmid="$1"; log "Creating snapshot '${SNAPSHOT_NAME}' for VM $vmid..."
     if qm snapshot "$vmid" "$SNAPSHOT_NAME" --description "Auto-created by vm-to-lxc before conversion" >> "$LOG_FILE" 2>&1; then
@@ -370,6 +447,11 @@ create_snapshot() {
     else warn "Failed to create snapshot. Rollback will not be available."; SNAPSHOT_CREATED=false; fi
 }
 
+### Function: rollback_snapshot
+# Roll a VM back to the pre-conversion snapshot on failure.
+#
+# Arguments:
+#   $1 - VM ID.
 rollback_snapshot() {
     local vmid="$1"; $SNAPSHOT_CREATED || return 0
     log "Rolling back VM $vmid to snapshot '${SNAPSHOT_NAME}'..."
@@ -378,6 +460,11 @@ rollback_snapshot() {
     else err "Rollback failed! Manual recovery: qm rollback $vmid $SNAPSHOT_NAME"; fi
 }
 
+### Function: remove_snapshot
+# Remove the pre-conversion snapshot after a successful conversion.
+#
+# Arguments:
+#   $1 - VM ID.
 remove_snapshot() {
     local vmid="$1"; $SNAPSHOT_CREATED || return 0
     log "Removing snapshot '${SNAPSHOT_NAME}'..."
@@ -391,9 +478,25 @@ remove_snapshot() {
 RESUME_DIR="/var/lib/vm-to-lxc/resume"
 RSYNC_PARTIAL_DIR=""
 
+### Function: ensure_resume_dir
+# Ensure the resume-state directory exists, exiting on failure.
 ensure_resume_dir() { mkdir -p "$RESUME_DIR" 2>/dev/null || die "Cannot create resume directory"; }
+### Function: get_resume_file
+# Return the resume-state file path for a VM→CT conversion.
+#
+# Arguments:
+#   $1 - VM ID.
+#   $2 - Container ID.
 get_resume_file() { echo "$RESUME_DIR/vm${1}-ct${2}.state"; }
 
+### Function: save_resume_state
+# Persist conversion state so an interrupted run can be resumed.
+#
+# Arguments:
+#   $1 - VM ID.
+#   $2 - Container ID.
+#   $3 - Current stage name.
+#   $4 - Additional data (optional).
 save_resume_state() {
     local vmid="$1" ctid="$2" stage="$3" data="${4:-}"; ensure_resume_dir
     cat > "$(get_resume_file "$vmid" "$ctid")" <<RESUME_EOF
@@ -401,12 +504,27 @@ VMID="$vmid"; CTID="$ctid"; STAGE="$stage"; TIMESTAMP="$(date -Is)"; TEMP_DIR="$
 RESUME_EOF
 }
 
+### Function: clear_resume_state
+# Remove resume state and partial rsync data after a successful conversion.
+#
+# Arguments:
+#   $1 - VM ID.
+#   $2 - Container ID.
 clear_resume_state() {
     local state_file=$(get_resume_file "$1" "$2")
     [[ -f "$state_file" ]] && rm -f "$state_file"
     [[ -n "$RSYNC_PARTIAL_DIR" && -d "$RSYNC_PARTIAL_DIR" ]] && rm -rf "$RSYNC_PARTIAL_DIR" 2>/dev/null || true
 }
 
+### Function: check_resume_state
+# Load an existing resume state for a VM→CT conversion if present.
+#
+# Arguments:
+#   $1 - VM ID.
+#   $2 - Container ID.
+#
+# Returns:
+#   0 if a state file exists and was sourced; 1 otherwise.
 check_resume_state() {
     local state_file=$(get_resume_file "$1" "$2")
     [[ -f "$state_file" ]] || return 1; source "$state_file"
@@ -417,6 +535,11 @@ check_resume_state() {
 # BATCH PROCESSING
 # ==============================================================================
 
+### Function: process_batch_file
+# Process a batch file containing VMID/CTID pairs sequentially.
+#
+# Arguments:
+#   $1 - Path to the batch file.
 process_batch_file() {
     local batch_file="$1"; [[ -f "$batch_file" ]] || die "Batch file not found: $batch_file"
     log "Processing batch file: $batch_file"
@@ -434,6 +557,11 @@ process_batch_file() {
     exit 0
 }
 
+### Function: process_range
+# Convert a range of VMs to a corresponding range of containers.
+#
+# Arguments:
+#   $1 - Range specification in the form `START-END:START-END`.
 process_range() {
     local range_spec="$1"
     local vm_range="${range_spec%%:*}" ct_range="${range_spec#*:}"
@@ -457,6 +585,15 @@ process_range() {
 # SINGLE CONVERSION WRAPPER
 # ==============================================================================
 
+### Function: run_single_conversion
+# Orchestrate one VM→LXC conversion from validation through cleanup.
+#
+# Arguments:
+#   $1 - Source VM ID.
+#   $2 - Target container ID.
+#
+# Returns:
+#   0 on success; 1 on failure.
 run_single_conversion() {
     local single_vmid="$1" single_ctid="$2"
     VMID="$single_vmid"; CTID="$single_ctid"

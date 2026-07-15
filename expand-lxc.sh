@@ -33,10 +33,8 @@ if [[ "${DEBUG:-0}" -eq 1 ]]; then
     set -x
 fi
 
-# Debug logging function
-# Arguments:
-#   $* - Debug message to display
-# Outputs: Debug text to stdout (only if DEBUG=1)
+### Function: debug
+# Print a debug message to stderr (if DEBUG=1) and the log file.
 debug() {
     if [[ "$DEBUG" -eq 1 ]]; then
         echo -e "${BLUE}[DEBUG]${NC} $*" >&2
@@ -44,9 +42,8 @@ debug() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $*" >> "$LOG_FILE"
 }
 
-# Verbose logging function
-# Arguments:
-#   $* - Verbose message to log
+### Function: verbose
+# Print a verbose message to the log file, optionally to stdout.
 verbose() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [VERBOSE] $*" >> "$LOG_FILE"
     if [[ "$DEBUG" -eq 1 ]]; then
@@ -78,19 +75,29 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' BOLD='' NC=''
 fi
 
-# Echo with interpretation of backslash escapes
+### Function: e
+# Echo text with backslash escape interpretation.
 e() { echo -e "$*"; }
 
-# --- Logging Functions ---
+### Function: log
+# Print an info message to stdout and the log file.
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
+### Function: warn
+# Print a warning message to stdout and the log file.
 warn() { printf "${YELLOW}[!]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
+### Function: err
+# Print an error message to stderr and the log file.
 err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
+### Function: ok
+# Print a success message to stdout and the log file.
 ok()   { printf "${GREEN}[✓]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 
-# Fatal error exit function
+### Function: die
+# Print an error message and exit with E_INVALID_ARG.
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
 
-# Map failed command to likely root cause + actionable fix
+### Function: error_reason_and_fix
+# Map a failed command to a human-readable reason and fix suggestion.
 error_reason_and_fix() {
     local failed_cmd="$1"
     local reason="Command failed during expand workflow."
@@ -130,7 +137,8 @@ error_reason_and_fix() {
     printf '%s|%s\n' "$reason" "$fix"
 }
 
-# Map failed command to exit code
+### Function: error_exit_code
+# Map a failed command to a stable exit code for automation.
 error_exit_code() {
     local failed_cmd="$1"
 
@@ -150,7 +158,8 @@ error_exit_code() {
     esac
 }
 
-# Global ERR trap for actionable diagnostics
+### Function: on_error
+# Global ERR trap that prints diagnostics and exits with a mapped code.
 on_error() {
     local exit_code=$?
     local line_no="${BASH_LINENO[0]:-unknown}"
@@ -177,7 +186,8 @@ on_error() {
 
 trap 'on_error' ERR
 
-# --- Usage / Help ---
+### Function: usage
+# Display usage/help text and exit.
 usage() {
     cat <<USAGE
 ${BOLD}Proxmox LXC Disk Expander v${VERSION}${NC}
