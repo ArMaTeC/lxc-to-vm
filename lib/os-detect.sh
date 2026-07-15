@@ -107,7 +107,7 @@ _detect_via_guestfs() {
     fi
 
     # Check for EFI System Partition
-    if echo "$inspector_out" | grep -qP '<partition[^>]*>.*?<partitions>.*?<type>efi</type>'; then
+    if echo "$inspector_out" | grep -qP '<partition[^>]*>.*?<type>efi</type>.*?</partition>'; then
         OS_HAS_ESP="true"
     fi
 

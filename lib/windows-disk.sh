@@ -28,7 +28,7 @@ if [[ "$(type -t ok 2>/dev/null)" != "function" ]]; then
     ok() { printf "[OK] %s\n" "$*" | tee -a "$LOG_FILE"; }
 fi
 if [[ "$(type -t die 2>/dev/null)" != "function" ]]; then
-    die() { printf "[FATAL] %s\n" "$*" >&2; exit 1; }
+    die() { printf "[FATAL] %s\n" "$*" >&2; exit "${E_INVALID_ARG:-1}"; }
 fi
 
 ### Function: windows_check_ntfs
@@ -46,6 +46,7 @@ fi
 windows_check_ntfs() {
     local disk_path="$1"
     local log_file="${2:-/var/log/windows-disk.log}"
+    local LOG_FILE="$log_file"
 
     log "Checking NTFS consistency on $disk_path..."
 
@@ -149,7 +150,11 @@ windows_shrink_libguestfs() {
             temp_raw=$(mktemp "/tmp/vm-shrink-raw.XXXXXX.raw")
         fi
         log "Converting $img_format to temporary raw image..."
-        qemu-img convert -f "$img_format" -O raw "$disk_path" "$temp_raw"
+        qemu-img convert -f "$img_format" -O raw "$disk_path" "$temp_raw" || {
+            __cleanup_shrink_libguestfs
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
     else
         temp_raw="$disk_path"
     fi
@@ -168,9 +173,17 @@ windows_shrink_libguestfs() {
     # Convert back if needed
     if [[ "$img_format" != "raw" ]]; then
         log "Converting back to $img_format..."
-        qemu-img convert -f raw -O "$img_format" "$temp_new" "$disk_path"
+        qemu-img convert -f raw -O "$img_format" "$temp_new" "$disk_path" || {
+            __cleanup_shrink_libguestfs
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
     else
-        mv -f "$temp_new" "$disk_path"
+        mv -f "$temp_new" "$disk_path" || {
+            __cleanup_shrink_libguestfs
+            trap - RETURN
+            die "mv failed."
+        }
     fi
 
     __cleanup_shrink_libguestfs
@@ -225,34 +238,71 @@ windows_shrink_ntfsresize() {
             temp_raw=$(mktemp "/tmp/vm-shrink.XXXXXX.raw")
         fi
         trap '__cleanup_shrink_ntfsresize' RETURN
-        qemu-img convert -f qcow2 -O raw "$disk_path" "$temp_raw"
-        loop_dev=$(losetup --show -f "$temp_raw")
+        qemu-img convert -f qcow2 -O raw "$disk_path" "$temp_raw" || {
+            __cleanup_shrink_ntfsresize
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
+        loop_dev=$(losetup --show -f "$temp_raw") || {
+            __cleanup_shrink_ntfsresize
+            trap - RETURN
+            die "losetup failed for $temp_raw."
+        }
     else
-        loop_dev=$(losetup --show -f "$disk_path")
+        loop_dev=$(losetup --show -f "$disk_path") || {
+            __cleanup_shrink_ntfsresize
+            trap - RETURN
+            die "losetup failed for $disk_path."
+        }
     fi
 
     trap '__cleanup_shrink_ntfsresize' RETURN
 
     # Check NTFS before shrink
-    ntfsresize -i "$loop_dev" >> "$LOG_FILE" 2>&1 || die "ntfsresize info failed."
+    ntfsresize -i "$loop_dev" >> "$LOG_FILE" 2>&1 || {
+        __cleanup_shrink_ntfsresize
+        trap - RETURN
+        die "ntfsresize info failed."
+    }
 
     # Shrink NTFS
     local new_size_bytes=$((new_size_gb * 1024 * 1024 * 1024))
     log "Shrinking NTFS to ${new_size_gb}GB..."
-    ntfsresize --size "${new_size_bytes}" "$loop_dev" >> "$LOG_FILE" 2>&1 || die "ntfsresize shrink failed."
+    ntfsresize --size "${new_size_bytes}" "$loop_dev" >> "$LOG_FILE" 2>&1 || {
+        __cleanup_shrink_ntfsresize
+        trap - RETURN
+        die "ntfsresize shrink failed."
+    }
 
-    losetup -d "$loop_dev"
+    losetup -d "$loop_dev" 2>/dev/null || {
+        __cleanup_shrink_ntfsresize
+        trap - RETURN
+        die "Failed to detach loop device $loop_dev."
+    }
 
     if [[ "$img_format" == "qcow2" ]]; then
         # Truncate raw and convert back
-        truncate -s "${new_size_gb}G" "$temp_raw"
-        qemu-img convert -f raw -O qcow2 "$temp_raw" "$disk_path"
+        truncate -s "${new_size_gb}G" "$temp_raw" || {
+            __cleanup_shrink_ntfsresize
+            trap - RETURN
+            die "truncate failed."
+        }
+        qemu-img convert -f raw -O qcow2 "$temp_raw" "$disk_path" || {
+            __cleanup_shrink_ntfsresize
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
         rm -f "$temp_raw"
     else
         # Raw image: truncate
-        truncate -s "${new_size_gb}G" "$disk_path"
+        truncate -s "${new_size_gb}G" "$disk_path" || {
+            __cleanup_shrink_ntfsresize
+            trap - RETURN
+            die "truncate failed."
+        }
     fi
 
+    __cleanup_shrink_ntfsresize
     trap - RETURN
     ok "Windows shrink complete via ntfsresize."
     return 0
@@ -310,13 +360,21 @@ windows_expand_libguestfs() {
             temp_raw=$(mktemp "/tmp/vm-expand-raw.XXXXXX.raw")
         fi
         log "Converting $img_format to temporary raw image..."
-        qemu-img convert -f "$img_format" -O raw "$disk_path" "$temp_raw"
+        qemu-img convert -f "$img_format" -O raw "$disk_path" "$temp_raw" || {
+            __cleanup_expand_libguestfs
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
     else
         temp_raw="$disk_path"
     fi
 
     # Expand virtual disk first (virt-resize needs space)
-    truncate -s "${new_size_gb}G" "$temp_raw"
+    truncate -s "${new_size_gb}G" "$temp_raw" || {
+        __cleanup_expand_libguestfs
+        trap - RETURN
+        die "truncate failed."
+    }
 
     log "Expanding with virt-resize..."
     if ! LIBGUESTFS_BACKEND=direct virt-resize \
@@ -330,9 +388,17 @@ windows_expand_libguestfs() {
 
     if [[ "$img_format" != "raw" ]]; then
         log "Converting back to $img_format..."
-        qemu-img convert -f raw -O "$img_format" "$temp_new" "$disk_path"
+        qemu-img convert -f raw -O "$img_format" "$temp_new" "$disk_path" || {
+            __cleanup_expand_libguestfs
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
     else
-        mv -f "$temp_new" "$disk_path"
+        mv -f "$temp_new" "$disk_path" || {
+            __cleanup_expand_libguestfs
+            trap - RETURN
+            die "mv failed."
+        }
     fi
 
     __cleanup_expand_libguestfs
@@ -368,7 +434,7 @@ windows_expand_ntfsresize() {
         die "ntfsresize not available. Install ntfs-3g: apt install ntfs-3g"
     fi
 
-    local temp_raw
+    local temp_raw=""
     local loop_dev=""
 
     __cleanup_expand_ntfsresize() {
@@ -387,29 +453,62 @@ windows_expand_ntfsresize() {
             temp_raw=$(mktemp "/tmp/vm-expand.XXXXXX.raw")
         fi
         trap '__cleanup_expand_ntfsresize' RETURN
-        qemu-img convert -f qcow2 -O raw "$disk_path" "$temp_raw"
+        qemu-img convert -f qcow2 -O raw "$disk_path" "$temp_raw" || {
+            __cleanup_expand_ntfsresize
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
 
         # Expand raw image
-        truncate -s "${new_size_gb}G" "$temp_raw"
-        loop_dev=$(losetup --show -f "$temp_raw")
+        truncate -s "${new_size_gb}G" "$temp_raw" || {
+            __cleanup_expand_ntfsresize
+            trap - RETURN
+            die "truncate failed."
+        }
+        loop_dev=$(losetup --show -f "$temp_raw") || {
+            __cleanup_expand_ntfsresize
+            trap - RETURN
+            die "losetup failed for $temp_raw."
+        }
     else
         # Raw image: expand file then loop mount
-        truncate -s "${new_size_gb}G" "$disk_path"
-        loop_dev=$(losetup --show -f "$disk_path")
+        truncate -s "${new_size_gb}G" "$disk_path" || {
+            __cleanup_expand_ntfsresize
+            trap - RETURN
+            die "truncate failed."
+        }
+        loop_dev=$(losetup --show -f "$disk_path") || {
+            __cleanup_expand_ntfsresize
+            trap - RETURN
+            die "losetup failed for $disk_path."
+        }
     fi
 
     trap '__cleanup_expand_ntfsresize' RETURN
 
     # Expand NTFS to fill
     log "Expanding NTFS filesystem..."
-    ntfsresize --force --force "$loop_dev" >> "$LOG_FILE" 2>&1 || die "ntfsresize expand failed."
+    ntfsresize --force --force "$loop_dev" >> "$LOG_FILE" 2>&1 || {
+        __cleanup_expand_ntfsresize
+        trap - RETURN
+        die "ntfsresize expand failed."
+    }
 
-    losetup -d "$loop_dev"
+    losetup -d "$loop_dev" 2>/dev/null || {
+        __cleanup_expand_ntfsresize
+        trap - RETURN
+        die "Failed to detach loop device $loop_dev."
+    }
 
     if [[ "$img_format" == "qcow2" ]]; then
-        qemu-img convert -f raw -O qcow2 "$temp_raw" "$disk_path"
+        qemu-img convert -f raw -O qcow2 "$temp_raw" "$disk_path" || {
+            __cleanup_expand_ntfsresize
+            trap - RETURN
+            die "qemu-img convert failed."
+        }
     fi
 
+    __cleanup_expand_ntfsresize
     trap - RETURN
     ok "Windows expand complete via ntfsresize."
     return 0
