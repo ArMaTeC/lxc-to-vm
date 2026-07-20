@@ -194,6 +194,7 @@ OPTIONS:
   --keep-old             Keep old disk attached as backup (default behavior)
   -n, --dry-run          Show what would be done without making changes
   --force                Skip confirmation prompts
+  --skip-checks          Skip storage free-space pre-check
   --os-type <TYPE>       Override OS detection for VMs (linux, windows)
   -h, --help             Show this help message
   -V, --version          Show version
@@ -255,6 +256,7 @@ SNAPSHOT=false
 KEEP_OLD=true
 DRY_RUN=false
 FORCE=false
+SKIP_CHECKS=false
 OS_TYPE_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
@@ -271,6 +273,7 @@ while [[ $# -gt 0 ]]; do
         --keep-old)      KEEP_OLD=true; REMOVE_OLD=false; shift ;;
         -n|--dry-run)    DRY_RUN=true; shift ;;
         --force)         FORCE=true; shift ;;
+        --skip-checks)   SKIP_CHECKS=true; shift ;;
         --os-type)       OS_TYPE_OVERRIDE="$2"; shift 2 ;;
         -h|--help)       usage ;;
         -V|--version)    echo "v${VERSION}"; exit 0 ;;
@@ -398,9 +401,13 @@ fi
 
 TARGET_REF="${TARGET_STORAGE}:${TARGET_VOLUME}"
 
+# ==============================================================================
+# TARGET STORAGE SPACE CHECK
+# ==============================================================================
 log "Target: $TARGET_REF"
 log "Target size: ${TARGET_SIZE}GB"
 log "Target format: $TARGET_FORMAT"
+check_target_space "$TARGET_STORAGE" "$TARGET_SIZE" "clone disk"
 
 # ==============================================================================
 # CHECK STATUS

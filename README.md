@@ -29,6 +29,7 @@
 - **📊 Batch Processing** - Convert multiple workloads at once
 - **🔌 Hook System** - Custom automation at every stage
 - **🧙 Interactive Wizard** - TUI mode for guided conversion
+- **🛡️ Pre-Flight Safety** - Detect existing VM/CT IDs and verify target storage space before changes
 - **☁️ Cloud Export** - Export to S3, NFS, or remote storage
 - **🧪 Remote Testing** - Automated remote PVE validation with `test-remote-pve.sh`
 

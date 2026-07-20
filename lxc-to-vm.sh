@@ -331,6 +331,7 @@ Options:
   --api-user <USER>      API user (default: root@pam)
   --migrate-to-local     Auto-migrate container to local node if on remote
   --predict-size         Use predictive advisor for disk size (analyze growth patterns)
+  --skip-checks          Skip ID-collision and storage free-space pre-checks
   --no-auto-fix          Disable automatic remediation when health checks detect known issues
   -h, --help             Show this help message
   -V, --version          Show version
@@ -1204,16 +1205,10 @@ run_single_conversion() {
     fi
 
     if qm config "$VMID" >/dev/null 2>&1; then
-        if $CLEANUP_EXISTING_VM; then
-            warn "VM ID $VMID already exists; stopping and destroying due to --replace-vm..."
-            qm stop "$VMID" >/dev/null 2>&1 || true
-            sleep 2
-            qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >/dev/null 2>&1 \
-                || die "Failed to destroy existing VM $VMID. Check $LOG_FILE for details."
-            ok "Destroyed existing VM $VMID."
-        else
-            err "VM ID $VMID already exists. Skipping."
-            return 1
+        local replace_arg=""
+        $CLEANUP_EXISTING_VM && replace_arg="true"
+        if check_target_collision vm "$VMID" "$replace_arg"; then
+            destroy_vm_if_exists "$VMID"
         fi
     fi
 
@@ -1221,6 +1216,9 @@ run_single_conversion() {
     if $CREATE_SNAPSHOT; then
         create_snapshot "$CTID"
     fi
+
+    # Target storage space check
+    check_target_space "$STORAGE" "$DISK_SIZE" "VM disk"
 
     # Run the main conversion (trap will handle cleanup)
     if do_conversion; then
@@ -1253,7 +1251,7 @@ BATCH_FILE="" RANGE_SPEC="" PROFILE_NAME="" SAVE_PROFILE_NAME=""
 WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false
 EXPORT_DEST="" AS_TEMPLATE=false SYSPREP=false
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
-AUTO_FIX=true
+AUTO_FIX=true SKIP_CHECKS=false
 CLEANUP_EXISTING_VM=false
 
 while [[ $# -gt 0 ]]; do
@@ -1270,6 +1268,7 @@ while [[ $# -gt 0 ]]; do
         -k|--keep-network) KEEP_NETWORK=true; shift ;;
         -S|--start)      AUTO_START=true;   shift ;;
         --no-auto-fix)   AUTO_FIX=false;    shift ;;
+        --skip-checks)   SKIP_CHECKS=true;  shift ;;
         --shrink)        SHRINK_FIRST=true; shift ;;
         --snapshot)      CREATE_SNAPSHOT=true; shift ;;
         --rollback-on-failure) ROLLBACK_ON_FAILURE=true; shift ;;
@@ -1879,15 +1878,10 @@ if ! pct config "$CTID" >/dev/null 2>&1; then
 fi
 
 if qm config "$VMID" >/dev/null 2>&1; then
-    if $CLEANUP_EXISTING_VM; then
-        warn "VM ID $VMID already exists; stopping and destroying due to --replace-vm..."
-        qm stop "$VMID" >/dev/null 2>&1 || true
-        sleep 2
-        qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >/dev/null 2>&1 \
-            || die "Failed to destroy existing VM $VMID. Check $LOG_FILE for details."
-        ok "Destroyed existing VM $VMID."
-    else
-        die "VM ID $VMID already exists. Choose a different ID."
+    local replace_arg=""
+    $CLEANUP_EXISTING_VM && replace_arg="true"
+    if check_target_collision vm "$VMID" "$replace_arg"; then
+        destroy_vm_if_exists "$VMID"
     fi
 fi
 
@@ -3482,15 +3476,10 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
     fi
 
     if qm config "$VMID" >/dev/null 2>&1; then
-        if $CLEANUP_EXISTING_VM; then
-            warn "VM ID $VMID already exists; stopping and destroying due to --replace-vm..."
-            qm stop "$VMID" >/dev/null 2>&1 || true
-            sleep 2
-            qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >/dev/null 2>&1 \
-                || die "Failed to destroy existing VM $VMID. Check $LOG_FILE for details."
-            ok "Destroyed existing VM $VMID."
-        else
-            die "VM ID $VMID already exists. Choose a different ID."
+        local replace_arg=""
+        $CLEANUP_EXISTING_VM && replace_arg="true"
+        if check_target_collision vm "$VMID" "$replace_arg"; then
+            destroy_vm_if_exists "$VMID"
         fi
     fi
 
@@ -3498,6 +3487,9 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
     if $CREATE_SNAPSHOT; then
         create_snapshot "$CTID"
     fi
+
+    # Target storage space check
+    check_target_space "$STORAGE" "$DISK_SIZE" "VM disk"
 
     # Run the conversion
     if do_conversion; then

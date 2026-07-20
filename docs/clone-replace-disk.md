@@ -62,6 +62,7 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
 | | `--keep-old` | Explicitly keep old disk (default behavior) | On |
 | `-n` | `--dry-run` | Show what would be done without changes | — |
 | | `--force` | Skip confirmation prompts | — |
+| | `--skip-checks` | Skip target-storage free-space pre-check | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -70,14 +71,17 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
 ## Workflow
 
 ```text
-1. Stop VM/Container
-2. Clone source disk → target disk (with optional resize)
-3. Detach old disk from config (kept as backup by default)
-4. Attach new disk to config
-5. Expand filesystem on new disk (if size increased)
-6. Remove old disk (only if --remove-old specified)
-7. Start VM/Container
+1. Check target storage has enough free space for the clone
+2. Stop VM/Container
+3. Clone source disk → target disk (with optional resize)
+4. Detach old disk from config (kept as backup by default)
+5. Attach new disk to config
+6. Expand filesystem on new disk (if size increased)
+7. Remove old disk (only if --remove-old specified)
+8. Start VM/Container
 ```
+
+Use `--skip-checks` to bypass the free-space pre-check.
 
 ---
 

@@ -102,6 +102,7 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm \
 | | `--api-user` | Proxmox API user | `root@pam` |
 | | `--no-auto-fix` | Disable auto-remediation | — |
 | | `--validate-only` | Run pre-flight checks only | — |
+| | `--skip-checks` | Skip ID-collision and free-space pre-checks | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -257,11 +258,14 @@ sudo ./vm-to-lxc.sh --wizard
 
 ### Detailed Process
 
-1. **Validation Phase**
+1. **Validation & Detection Phase**
    - Verify VM exists and is accessible
+   - Detect whether the target container ID is already in use and prompt before overwriting
+   - Check target storage has enough free space for the new container root disk
    - Check VM disk configuration (virtio0, scsi0, ide0, sata0)
    - Validate target storage availability
    - Check disk space requirements
+   - Use `--skip-checks` to bypass the ID-collision and free-space pre-checks
 
 2. **Snapshot Phase (Optional)**
    - Create VM snapshot for rollback safety

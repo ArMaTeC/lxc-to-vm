@@ -109,6 +109,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 | | `--api-token` | Proxmox API token | — |
 | | `--api-user` | Proxmox API user | `root@pam` |
 | | `--validate-only` | Run pre-flight checks only | — |
+| | `--skip-checks` | Skip ID-collision and free-space pre-checks | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -253,11 +254,14 @@ sudo ./lxc-to-vm.sh --wizard
 
 ### Detailed Process
 
-1. **Validation Phase**
+1. **Validation & Detection Phase**
    - Verify container exists and is accessible
+   - Detect whether the target VM ID is already in use and prompt before overwriting
+   - Check target storage has enough free space for the new VM disk
    - Check container filesystem type (ext4, xfs, btrfs supported)
    - Validate target storage availability
    - Check disk space requirements
+   - Use `--skip-checks` to bypass the ID-collision and free-space pre-checks
 
 2. **Shrink Phase (Optional)**
    - Zero-fill free space for better compression

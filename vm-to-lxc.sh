@@ -176,6 +176,7 @@ Options:
   --api-user <USER>      API user (default: root@pam)
   --migrate-to-local     Auto-migrate VM to local node if on remote
   --predict-size         Use predictive advisor for disk size
+  --skip-checks          Skip ID-collision and storage free-space pre-checks
   --no-auto-fix          Disable automatic remediation on health check failures
   -h, --help             Show this help message
   -V, --version          Show version
@@ -599,7 +600,11 @@ run_single_conversion() {
     VMID="$single_vmid"; CTID="$single_ctid"
     qm config "$VMID" >/dev/null 2>&1 || { err "VM $VMID does not exist. Skipping."; return 1; }
     if pct config "$CTID" >/dev/null 2>&1; then
-        $CLEANUP_EXISTING_CT && destroy_ct_if_exists "$CTID" || { err "CT ID $CTID already exists. Skipping."; return 1; }
+        local replace_arg=""
+        $CLEANUP_EXISTING_CT && replace_arg="true"
+        if check_target_collision ct "$CTID" "$replace_arg"; then
+            destroy_ct_if_exists "$CTID"
+        fi
     fi
     $CREATE_SNAPSHOT && create_snapshot "$VMID"
     if do_conversion; then
@@ -629,7 +634,7 @@ BATCH_FILE="" RANGE_SPEC="" PROFILE_NAME="" SAVE_PROFILE_NAME=""
 WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false
 UNPRIVILEGED=false CT_PASSWORD=""
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
-AUTO_FIX=true CLEANUP_EXISTING_CT=false
+AUTO_FIX=true SKIP_CHECKS=false CLEANUP_EXISTING_CT=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -643,6 +648,7 @@ while [[ $# -gt 0 ]]; do
         -k|--keep-network) KEEP_NETWORK=true; shift ;;
         -S|--start)      AUTO_START=true;   shift ;;
         --no-auto-fix)   AUTO_FIX=false;    shift ;;
+        --skip-checks)   SKIP_CHECKS=true;  shift ;;
         --snapshot)      CREATE_SNAPSHOT=true; shift ;;
         --rollback-on-failure) ROLLBACK_ON_FAILURE=true; shift ;;
         --destroy-source) DESTROY_SOURCE=true; shift ;;
@@ -794,7 +800,11 @@ ensure_dependency qemu-img qemu-utils
 
 qm config "$VMID" >/dev/null 2>&1 || die "VM $VMID does not exist."
 if pct config "$CTID" >/dev/null 2>&1; then
-    $CLEANUP_EXISTING_CT && destroy_ct_if_exists "$CTID" || die "CT ID $CTID already exists."
+    local replace_arg=""
+    $CLEANUP_EXISTING_CT && replace_arg="true"
+    if check_target_collision ct "$CTID" "$replace_arg"; then
+        destroy_ct_if_exists "$CTID"
+    fi
 fi
 pvesm status | awk 'NR>1{print $1}' | grep -qx "$STORAGE" || die "Storage '$STORAGE' not found."
 
@@ -1078,6 +1088,9 @@ NETPLAN
     # --- Create LXC container ---
     log "Creating LXC container $CTID..."
     log "  Name: $CT_HOSTNAME, Memory: ${MEMORY}MB, Cores: $CORES, Disk: ${DISK_SIZE}GB"
+
+    # Target storage free-space check before allocation
+    check_target_space "$STORAGE" "$DISK_SIZE" "CT root disk"
 
     local PCT_CREATE_ARGS=(
         "$CTID" "$TARBALL"
