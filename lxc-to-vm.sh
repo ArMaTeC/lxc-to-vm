@@ -78,7 +78,7 @@ fi
 # Arguments:
 #   $* - Text to display (supports \n, \t, color codes)
 # Outputs: Formatted text to stdout
-e() { echo -e "$*"; }
+e() { printf '%b\n' "$*"; }
 
 # --- Logging Functions ---
 # All logging functions write to both stdout (for user) and log file (for audit)
@@ -820,8 +820,10 @@ list_profiles() {
     for profile in "$PROFILE_DIR"/*.conf; do
         [[ -f "$profile" ]] || continue
         found=true
-        local name=$(basename "$profile" .conf)
-        local created=$(stat -c %y "$profile" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+        local name
+        name=$(basename "$profile" .conf)
+        local created
+        created=$(stat -c %y "$profile" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
         e "  ${GREEN}•${NC} ${BOLD}$name${NC} (created: $created)"
     done
     $found || echo "  (none)"
@@ -1008,7 +1010,8 @@ save_resume_state() {
     local data="${4:-}"
 
     ensure_resume_dir
-    local state_file=$(get_resume_file "$ctid" "$vmid")
+    local state_file
+    state_file=$(get_resume_file "$ctid" "$vmid")
 
     cat > "$state_file" <<RESUME_EOF
 CTID="$ctid"
@@ -1030,7 +1033,8 @@ RESUME_EOF
 clear_resume_state() {
     local ctid="$1"
     local vmid="$2"
-    local state_file=$(get_resume_file "$ctid" "$vmid")
+    local state_file
+    state_file=$(get_resume_file "$ctid" "$vmid")
     [[ -f "$state_file" ]] && rm -f "$state_file"
     # Also clean up partial rsync data
     [[ -n "$RSYNC_PARTIAL_DIR" && -d "$RSYNC_PARTIAL_DIR" ]] && rm -rf "$RSYNC_PARTIAL_DIR" 2>/dev/null || true
@@ -1051,7 +1055,8 @@ clear_resume_state() {
 check_resume_state() {
     local ctid="$1"
     local vmid="$2"
-    local state_file=$(get_resume_file "$ctid" "$vmid")
+    local state_file
+    state_file=$(get_resume_file "$ctid" "$vmid")
 
     if [[ -f "$state_file" ]]; then
         # shellcheck disable=SC1090
@@ -1087,8 +1092,10 @@ process_batch_file() {
         [[ -z "${line// /}" ]] && continue
 
         # Parse CTID VMID pairs
-        local batch_ctid=$(echo "$line" | awk '{print $1}')
-        local batch_vmid=$(echo "$line" | awk '{print $2}')
+        local batch_ctid
+        batch_ctid=$(echo "$line" | awk '{print $1}')
+        local batch_vmid
+        batch_vmid=$(echo "$line" | awk '{print $2}')
 
         if [[ -z "$batch_ctid" || -z "$batch_vmid" ]]; then
             warn "Skipping invalid line $line_num: $line"
@@ -1152,7 +1159,7 @@ process_range() {
     local success_count=0
     local fail_count=0
 
-    for i in $(seq 0 $((count - 1))); do
+    for ((i=0; i<count; i++)); do
         local current_ctid=$((ct_start + i))
         local current_vmid=$((vm_start + i))
 
@@ -1543,7 +1550,8 @@ run_preflight_validation() {
     fi
 
     # Check 2: Container is stopped
-    local status=$(pct status "$check_ctid" 2>/dev/null | awk '{print $2}')
+    local status
+    status=$(pct status "$check_ctid" 2>/dev/null | awk '{print $2}')
     if [[ "$status" == "stopped" ]]; then
         check_pass "Container is stopped (optimal for consistent copy)"
     else
@@ -1572,7 +1580,8 @@ run_preflight_validation() {
     esac
 
     # Check 4: Root filesystem type
-    local rootfs_line=$(pct config "$check_ctid" | grep "^rootfs:")
+    local rootfs_line
+    rootfs_line=$(pct config "$check_ctid" | grep "^rootfs:")
     if echo "$rootfs_line" | grep -q "size="; then
         check_pass "Root filesystem configured with size"
     else
@@ -1587,7 +1596,8 @@ run_preflight_validation() {
     fi
 
     # Check 6: Storage availability
-    local storage_list=$(pvesm status 2>/dev/null | awk 'NR>1{print $1}' | tr '\n' ', ')
+    local storage_list
+    storage_list=$(pvesm status 2>/dev/null | awk 'NR>1{print $1}' | tr '\n' ', ')
     if [[ -n "$storage_list" ]]; then
         check_pass "Storage available: ${storage_list%, }"
     else
@@ -1596,7 +1606,8 @@ run_preflight_validation() {
 
     # Check 7: Disk space estimation
     if [[ -d "$rootfs_path" ]]; then
-        local used_bytes=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
+        local used_bytes
+        used_bytes=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
             --exclude='tmp/*' --exclude='run/*' \
             --exclude='mnt/*' --exclude='media/*' --exclude='lost+found' \
             "${rootfs_path}/" 2>/dev/null | awk '{print $1}')
@@ -1667,8 +1678,10 @@ process_batch_parallel() {
     log "Total conversions to process: $total"
 
     for job in "${jobs[@]}"; do
-        local batch_ctid=$(echo "$job" | awk '{print $1}')
-        local batch_vmid=$(echo "$job" | awk '{print $2}')
+        local batch_ctid
+        batch_ctid=$(echo "$job" | awk '{print $1}')
+        local batch_vmid
+        batch_vmid=$(echo "$job" | awk '{print $2}')
 
         # Wait if max jobs running
         while [[ $running -ge $max_jobs ]]; do
@@ -1723,29 +1736,36 @@ export_vm_disk() {
     log "Exporting VM $vmid disk to: $dest"
 
     # Get disk path from VM config
-    local disk_ref=$(qm config "$vmid" | awk -F': ' '/^scsi0:/{print $2}')
+    local disk_ref
+    disk_ref=$(qm config "$vmid" | awk -F': ' '/^scsi0:/{print $2}')
     [[ -z "$disk_ref" ]] && { warn "Could not find disk for VM $vmid"; return 1; }
 
     # Resolve full path
-    local disk_path=$(pvesm path "$disk_ref" 2>/dev/null)
+    local disk_path
+    disk_path=$(pvesm path "$disk_ref" 2>/dev/null)
     [[ -z "$disk_path" || ! -f "$disk_path" ]] && { warn "Disk not found: $disk_ref"; return 1; }
 
     case "$dest" in
         s3://*)
             ensure_dependency aws
-            local bucket=$(echo "$dest" | sed 's|s3://||')
+            local bucket
+            bucket=$(echo "$dest" | sed 's|s3://||')
             log "Uploading to S3 bucket: $bucket"
             aws s3 cp "$disk_path" "$dest/" --no-progress >> "$LOG_FILE" 2>&1 && ok "S3 upload complete" || warn "S3 upload failed"
             ;;
         nfs://*)
-            local nfs_path=$(echo "$dest" | sed 's|nfs://||')
-            local nfs_host=$(echo "$nfs_path" | cut -d'/' -f1)
-            local nfs_export=$(echo "$nfs_path" | cut -d'/' -f2-)
+            local nfs_path
+            nfs_path=$(echo "$dest" | sed 's|nfs://||')
+            local nfs_host
+            nfs_host=$(echo "$nfs_path" | cut -d'/' -f1)
+            local nfs_export
+            nfs_export=$(echo "$nfs_path" | cut -d'/' -f2-)
             log "Copying to NFS: $nfs_host:/$nfs_export"
             cp "$disk_path" "/mnt/nfs-$nfs_host/$nfs_export/" 2>/dev/null && ok "NFS copy complete" || warn "NFS copy failed"
             ;;
         ssh://*)
-            local ssh_dest=$(echo "$dest" | sed 's|ssh://||')
+            local ssh_dest
+            ssh_dest=$(echo "$dest" | sed 's|ssh://||')
             log "Copying via SSH to: $ssh_dest"
             scp "$disk_path" "$ssh_dest/" >> "$LOG_FILE" 2>&1 && ok "SSH copy complete" || warn "SSH copy failed"
             ;;
@@ -1796,15 +1816,18 @@ run_sysprep() {
     log "Cleaning VM $vmid for cloning (sysprep)..."
 
     # Get disk and mount it
-    local disk_ref=$(qm config "$vmid" | awk -F': ' '/^scsi0:/{print $2}')
-    local disk_path=$(pvesm path "$disk_ref" 2>/dev/null)
+    local disk_ref
+    disk_ref=$(qm config "$vmid" | awk -F': ' '/^scsi0:/{print $2}')
+    local disk_path
+    disk_path=$(pvesm path "$disk_ref" 2>/dev/null)
     [[ -z "$disk_path" ]] && { warn "Could not find disk for sysprep"; return 1; }
 
     local sysprep_dir="/tmp/sysprep-${vmid}"
     mkdir -p "$sysprep_dir"
 
     # Mount via loopback
-    local loop_dev=$(losetup --show -f "$disk_path")
+    local loop_dev
+    loop_dev=$(losetup --show -f "$disk_path")
     kpartx -a "$loop_dev" 2>/dev/null || true
     local part_dev="/dev/mapper/$(basename "$loop_dev")p1"
     [[ ! -b "$part_dev" ]] && part_dev="/dev/mapper/$(basename "$loop_dev")p2"
@@ -1829,7 +1852,7 @@ run_sysprep() {
         find "$sysprep_dir/var/log" -type f -exec truncate -s 0 {} \; 2>/dev/null || true
 
         # Clean temp files
-        rm -rf "$sysprep_dir/tmp/*" "$sysprep_dir/var/tmp/*" 2>/dev/null || true
+        find "$sysprep_dir/tmp" "$sysprep_dir/var/tmp" -mindepth 1 -delete 2>/dev/null || true
 
         umount "$sysprep_dir"
         ok "Sysprep complete for VM $vmid"
@@ -2294,7 +2317,8 @@ pick_work_dir() {
 #   0 on success; non-zero on failure (cleanup is handled by the EXIT trap).
 do_conversion() {
     # Capture start time for performance metrics
-    local conversion_start_time=$(date +%s)
+    local conversion_start_time
+    conversion_start_time=$(date +%s)
     
     # Dump container info for debugging
     dump_container_info "$CTID"
@@ -2654,7 +2678,7 @@ for masked_unit in sys-kernel-config.mount sys-kernel-debug.mount; do
         rm -f "/etc/systemd/system/$masked_unit"
     fi
 done
-rm -rf /run/*
+find /run -mindepth 1 -delete 2>/dev/null || true
 if [ -d /etc/systemd/system ] && [ ! -e /etc/systemd/system/default.target ]; then
     ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
 fi
@@ -3285,7 +3309,8 @@ run_check() {
 
 # Check 1: VM config exists
 qm config "$VMID" >/dev/null 2>&1
-run_check "VM config exists" $? ""
+VM_CONFIG_RC=$?
+run_check "VM config exists" "$VM_CONFIG_RC" ""
 
 # Check 2: Disk is attached
 DISK_ATTACHED=$(qm config "$VMID" 2>/dev/null | grep -c "scsi0:")

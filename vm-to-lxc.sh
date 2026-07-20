@@ -47,7 +47,7 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' PURPLE='' BOLD='' NC=''
 fi
 
-e() { echo -e "$*"; }
+e() { printf '%b\n' "$*"; }
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 warn() { printf "${YELLOW}[!]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
 err()  { printf "${RED}[✗]${NC} %s\n" "$*" | tee -a "$LOG_FILE" >&2; }
@@ -117,9 +117,11 @@ on_error() {
     local src_file="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
     local failed_cmd="${BASH_COMMAND:-unknown}"
     trap - ERR
-    local reason_fix=$(error_reason_and_fix "$failed_cmd")
+    local reason_fix
+    reason_fix=$(error_reason_and_fix "$failed_cmd")
     local reason="${reason_fix%%|*}" fix="${reason_fix#*|}"
-    local mapped_code=$(error_exit_code "$failed_cmd")
+    local mapped_code
+    mapped_code=$(error_exit_code "$failed_cmd")
     err "Unhandled error (raw exit ${exit_code}, mapped exit ${mapped_code}) at ${src_file}:${line_no}"
     err "Failed command: ${failed_cmd}"
     warn "Likely reason: ${reason}"
@@ -390,8 +392,10 @@ list_profiles() {
     ensure_profile_dir; e "${BOLD}Available profiles:${NC}"; local found=false
     for profile in "$PROFILE_DIR"/*.conf; do
         [[ -f "$profile" ]] || continue; found=true
-        local name=$(basename "$profile" .conf)
-        local created=$(stat -c %y "$profile" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+        local name
+        name=$(basename "$profile" .conf)
+        local created
+        created=$(stat -c %y "$profile" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
         e "  ${GREEN}•${NC} ${BOLD}$name${NC} (created: $created)"
     done; $found || echo "  (none)"; exit 0
 }
@@ -512,7 +516,8 @@ RESUME_EOF
 #   $1 - VM ID.
 #   $2 - Container ID.
 clear_resume_state() {
-    local state_file=$(get_resume_file "$1" "$2")
+    local state_file
+    state_file=$(get_resume_file "$1" "$2")
     [[ -f "$state_file" ]] && rm -f "$state_file"
     [[ -n "$RSYNC_PARTIAL_DIR" && -d "$RSYNC_PARTIAL_DIR" ]] && rm -rf "$RSYNC_PARTIAL_DIR" 2>/dev/null || true
 }
@@ -527,7 +532,8 @@ clear_resume_state() {
 # Returns:
 #   0 if a state file exists and was sourced; 1 otherwise.
 check_resume_state() {
-    local state_file=$(get_resume_file "$1" "$2")
+    local state_file
+    state_file=$(get_resume_file "$1" "$2")
     [[ -f "$state_file" ]] || return 1; source "$state_file"
     log "Found partial conversion state (stage: ${STAGE:-unknown}, from: ${TIMESTAMP:-unknown})"; return 0
 }
@@ -548,7 +554,10 @@ process_batch_file() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         line_num=$((line_num + 1))
         [[ "$line" =~ ^[[:space:]]*# ]] && continue; [[ -z "${line// /}" ]] && continue
-        local batch_vmid=$(echo "$line" | awk '{print $1}') batch_ctid=$(echo "$line" | awk '{print $2}')
+        local batch_vmid
+        batch_vmid=$(echo "$line" | awk '{print $1}')
+        local batch_ctid
+        batch_ctid=$(echo "$line" | awk '{print $2}')
         [[ -z "$batch_vmid" || -z "$batch_ctid" ]] && { warn "Skipping invalid line $line_num"; continue; }
         echo ""; log "========================================"; log "Batch item $line_num: VM $batch_vmid → CT $batch_ctid"; log "========================================"
         run_single_conversion "$batch_vmid" "$batch_ctid" && success_count=$((success_count + 1)) || fail_count=$((fail_count + 1))
@@ -572,7 +581,7 @@ process_range() {
     [[ "$count" -eq "$ct_count" ]] || die "Range sizes must match"
     log "Processing range: VM $vm_start-$vm_end → CT $ct_start-$ct_end ($count VMs)"
     local success_count=0 fail_count=0
-    for i in $(seq 0 $((count - 1))); do
+    for ((i=0; i<count; i++)); do
         local current_vmid=$((vm_start + i)) current_ctid=$((ct_start + i))
         echo ""; log "========================================"; log "Range item $((i+1))/$count: VM $current_vmid → CT $current_ctid"; log "========================================"
         run_single_conversion "$current_vmid" "$current_ctid" && success_count=$((success_count + 1)) || fail_count=$((fail_count + 1))
@@ -748,12 +757,15 @@ run_preflight_validation() {
     check_fail() { e "  ${RED}[✗]${NC} $1"; ((checks_total++)); }
     check_warn() { e "  ${YELLOW}[!]${NC} $1"; ((checks_total++)); }
     qm config "$check_vmid" >/dev/null 2>&1 && check_pass "VM $check_vmid exists" || { check_fail "VM $check_vmid does not exist"; return 1; }
-    local status=$(qm status "$check_vmid" 2>/dev/null | awk '{print $2}')
+    local status
+    status=$(qm status "$check_vmid" 2>/dev/null | awk '{print $2}')
     [[ "$status" == "stopped" ]] && check_pass "VM is stopped" || check_warn "VM is running"
-    local disk_ref=$(qm config "$check_vmid" 2>/dev/null | awk -F': ' '/^(scsi|virtio|ide|sata)0:/{print $2; exit}')
+    local disk_ref
+    disk_ref=$(qm config "$check_vmid" 2>/dev/null | awk -F': ' '/^(scsi|virtio|ide|sata)0:/{print $2; exit}')
     [[ -n "$disk_ref" ]] && check_pass "VM disk found" || check_fail "No disk found"
     qm config "$check_vmid" | grep -q "net0:" && check_pass "Network configured" || check_warn "No network interface"
-    local storage_list=$(pvesm status 2>/dev/null | awk 'NR>1{print $1}' | tr '\n' ', ')
+    local storage_list
+    storage_list=$(pvesm status 2>/dev/null | awk 'NR>1{print $1}' | tr '\n' ', ')
     [[ -n "$storage_list" ]] && check_pass "Storage available" || check_fail "No storage"
     local missing=""; for cmd in rsync kpartx losetup; do command -v "$cmd" >/dev/null 2>&1 || missing+="$cmd "; done
     [[ -z "$missing" ]] && check_pass "All dependencies available" || check_warn "Missing: $missing"
@@ -769,7 +781,10 @@ process_batch_parallel() {
     done < "$batch_file"
     local total=${#jobs[@]} running=0 completed=0
     for job in "${jobs[@]}"; do
-        local bv=$(echo "$job" | awk '{print $1}') bc=$(echo "$job" | awk '{print $2}')
+        local bv
+        bv=$(echo "$job" | awk '{print $1}')
+        local bc
+        bc=$(echo "$job" | awk '{print $2}')
         while [[ $running -ge $max_jobs ]]; do sleep 1; running=$(jobs -r | wc -l); done
         ( run_single_conversion "$bv" "$bc" >> "$LOG_FILE" 2>&1 ) &
         ((running++)); ((completed++))
@@ -843,7 +858,8 @@ check_space() { local a; a=$(df -BM --output=avail "$1" 2>/dev/null | tail -1 | 
 
 pick_work_dir() {
     local base="$1" required_mb="${2:-10240}"
-    local avail_mb=$(check_space "$base")
+    local avail_mb
+    avail_mb=$(check_space "$base")
     [[ "$avail_mb" -ge "$required_mb" ]] && { echo "$base"; return 0; }
     warn "Insufficient space in $base: ${avail_mb}MB < ${required_mb}MB" >&2
     [[ -n "$WORK_DIR" ]] && die "Specified --temp-dir too small."
@@ -864,7 +880,8 @@ pick_work_dir() {
 }
 
 do_conversion() {
-    local conversion_start_time=$(date +%s)
+    local conversion_start_time
+    conversion_start_time=$(date +%s)
     dump_vm_info "$VMID"
     verbose "Starting conversion: VM $VMID → CT $CTID"
 
@@ -886,7 +903,8 @@ do_conversion() {
     log "VM disk: $DISK_PATH"
 
     # --- OS detection: reject Windows VMs early ---
-    local disk_fmt=$(qemu-img info "$DISK_PATH" 2>/dev/null | awk '/file format:/{print $3}' || echo "raw")
+    local disk_fmt
+    disk_fmt=$(qemu-img info "$DISK_PATH" 2>/dev/null | awk '/file format:/{print $3}' || echo "raw")
     if command -v detect_os_from_disk &>/dev/null; then
         if detect_os_from_disk "$DISK_PATH" "$disk_fmt" 2>/dev/null; then
             if [[ "$OS_TYPE" == "windows" ]]; then
@@ -909,7 +927,8 @@ do_conversion() {
 
     # --- Mount VM disk ---
     log "Mounting VM disk..."
-    local disk_fmt=$(qemu-img info "$DISK_PATH" 2>/dev/null | awk '/file format:/{print $3}' || echo "unknown")
+    local disk_fmt
+    disk_fmt=$(qemu-img info "$DISK_PATH" 2>/dev/null | awk '/file format:/{print $3}' || echo "unknown")
     log "Detected disk format: $disk_fmt"
     local mount_disk="$DISK_PATH"
     if [[ "$disk_fmt" != "raw" && "$disk_fmt" != "unknown" ]]; then
@@ -921,7 +940,8 @@ do_conversion() {
     fi
 
     log "Mapping disk partitions..."
-    local kp_out=$(kpartx -av "$mount_disk" 2>&1) || die "Failed to map partitions"
+    local kp_out
+    kp_out=$(kpartx -av "$mount_disk" 2>&1) || die "Failed to map partitions"
     echo "$kp_out" >> "$LOG_FILE"
     LOOP_DEV=$(echo "$kp_out" | grep -oP 'loop\d+' | head -1)
     [[ -n "$LOOP_DEV" ]] && LOOP_DEV="/dev/${LOOP_DEV}"
@@ -929,19 +949,23 @@ do_conversion() {
     # Find root partition
     local ROOT_PART=""
     for ps in p2 p1 p3; do
-        local mp_name=$(echo "$kp_out" | awk '/add map/{print $3}' | grep "${ps}$" | head -1)
+        local mp_name
+        mp_name=$(echo "$kp_out" | awk '/add map/{print $3}' | grep "${ps}$" | head -1 || true)
         [[ -n "$mp_name" ]] || continue
         local dev="/dev/mapper/${mp_name}"
         [[ -b "$dev" ]] || continue
-        local ft=$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)
+        local ft
+        ft=$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)
         [[ "$ft" =~ ^(ext[234]|xfs|btrfs)$ ]] && { ROOT_PART="$dev"; break; }
     done
     if [[ -z "$ROOT_PART" ]]; then
         while read -r addline; do
-            local mp_name=$(echo "$addline" | awk '{print $3}')
+            local mp_name
+            mp_name=$(echo "$addline" | awk '{print $3}')
             [[ -n "$mp_name" ]] || continue
             local dev="/dev/mapper/${mp_name}"; [[ -b "$dev" ]] || continue
-            local ft=$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)
+            local ft
+            ft=$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)
             [[ "$ft" =~ ^(ext[234]|xfs|btrfs)$ ]] && { ROOT_PART="$dev"; break; }
         done <<< "$(echo "$kp_out" | grep 'add map')"
     fi
@@ -1004,7 +1028,8 @@ do_conversion() {
     log "Removing VM artifacts..."
     rm -rf "$STAGING_DIR/boot/grub" "$STAGING_DIR/boot/grub2" "$STAGING_DIR/boot/efi" 2>/dev/null || true
     rm -f "$STAGING_DIR/boot/vmlinuz"* "$STAGING_DIR/boot/initr"* "$STAGING_DIR/boot/System.map"* "$STAGING_DIR/boot/config-"* 2>/dev/null || true
-    rm -rf "$STAGING_DIR/lib/modules/"* "$STAGING_DIR/var/lib/dkms" 2>/dev/null || true
+    find "$STAGING_DIR/lib/modules" -mindepth 1 -delete 2>/dev/null || true
+    rm -rf "$STAGING_DIR/var/lib/dkms" 2>/dev/null || true
 
     # Remove GRUB default config
     rm -f "$STAGING_DIR/etc/default/grub" 2>/dev/null || true
@@ -1134,10 +1159,14 @@ NETPLAN
         fi
     }
 
-    pct config "$CTID" >/dev/null 2>&1; run_check "Container config exists" $?
-    local disk_check=$(pct config "$CTID" 2>/dev/null | grep -c "rootfs:")
+    pct config "$CTID" >/dev/null 2>&1
+    CT_CONFIG_RC=$?
+    run_check "Container config exists" "$CT_CONFIG_RC"
+    local disk_check
+    disk_check=$(pct config "$CTID" 2>/dev/null | grep -c "rootfs:" || true)
     run_check "Rootfs configured" $([[ "$disk_check" -ge 1 ]] && echo 0 || echo 1)
-    local net_check=$(pct config "$CTID" 2>/dev/null | grep -c "net0:")
+    local net_check
+    net_check=$(pct config "$CTID" 2>/dev/null | grep -c "net0:" || true)
     run_check "Network configured (net0)" $([[ "$net_check" -ge 1 ]] && echo 0 || echo 1)
 
     log "Validation: ${CHECKS_PASSED}/${CHECKS_TOTAL} checks passed."
@@ -1147,7 +1176,8 @@ NETPLAN
         log "Starting container $CTID..."
         pct start "$CTID" >> "$LOG_FILE" 2>&1
         sleep 3
-        local ct_status=$(pct status "$CTID" 2>/dev/null | awk '{print $2}')
+        local ct_status
+        ct_status=$(pct status "$CTID" 2>/dev/null | awk '{print $2}')
         run_check "Container running" $([[ "$ct_status" == "running" ]] && echo 0 || echo 1) "$ct_status"
 
         if [[ "$ct_status" == "running" ]]; then
@@ -1181,7 +1211,8 @@ NETPLAN
     # COMPLETION SUMMARY
     # ==============================================================================
 
-    local conversion_end_time=$(date +%s)
+    local conversion_end_time
+    conversion_end_time=$(date +%s)
     local duration=$((conversion_end_time - conversion_start_time))
 
     echo ""

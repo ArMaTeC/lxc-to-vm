@@ -49,7 +49,7 @@ fi
 #   $* - Debug message.
 debug() {
     if [[ "$DEBUG" -eq 1 ]]; then
-        echo -e "${BLUE}[DEBUG]${NC} $*" >&2
+        printf "${BLUE}[DEBUG]${NC} %s\n" "$*" >&2
     fi
     echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $*" >> "$LOG_FILE"
 }
@@ -62,7 +62,7 @@ debug() {
 verbose() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [VERBOSE] $*" >> "$LOG_FILE"
     if [[ "$DEBUG" -eq 1 ]]; then
-        echo -e "${BLUE}[*]${NC} $*"
+        printf "${BLUE}[*]${NC} %s\n" "$*"
     fi
 }
 # These allow external scripts to detect specific failure modes
@@ -98,7 +98,7 @@ fi
 # Arguments:
 #   $* - Text to echo (can contain \n, \t, color codes, etc.)
 # Outputs: Echoed text with escape interpretation to stdout
-e() { echo -e "$*"; }
+e() { printf '%b\n' "$*"; }
 
 # --- Logging Functions ---
 # All logging functions write to both stdout (for user) and log file (for records)

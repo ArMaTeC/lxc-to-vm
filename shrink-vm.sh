@@ -35,7 +35,7 @@ fi
 # Print a debug message to stderr (if DEBUG=1) and the log file.
 debug() {
     if [[ "$DEBUG" -eq 1 ]]; then
-        echo -e "${BLUE}[DEBUG]${NC} $*" >&2
+        printf "${BLUE}[DEBUG]${NC} %s\n" "$*" >&2
     fi
     echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $*" >> "$LOG_FILE"
 }
@@ -45,7 +45,7 @@ debug() {
 verbose() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [VERBOSE] $*" >> "$LOG_FILE"
     if [[ "$DEBUG" -eq 1 ]]; then
-        echo -e "${BLUE}[*]${NC} $*"
+        printf "${BLUE}[*]${NC} %s\n" "$*"
     fi
 }
 
@@ -75,7 +75,7 @@ fi
 
 ### Function: e
 # Echo text with backslash escape interpretation.
-e() { echo -e "$*"; }
+e() { printf '%b\n' "$*"; }
 ### Function: log
 # Print an info message to stdout and the log file.
 log()  { printf "${BLUE}[*]${NC} %s\n" "$*" | tee -a "$LOG_FILE"; }
