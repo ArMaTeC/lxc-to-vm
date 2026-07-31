@@ -23,7 +23,8 @@ Common issues and solutions for the Proxmox LXC ↔️ VM Converter suite.
 9. [Disk/Storage Issues](#diskstorage-issues)
 10. [Permission Issues](#permission-issues)
 11. [Debug Mode](#debug-mode)
-12. [Getting Help](#getting-help)
+12. [Common Proxmox VE Gotchas](#common-proxmox-ve-gotchas)
+13. [Getting Help](#getting-help)
 
 ---
 
@@ -726,6 +727,143 @@ tail -f /var/log/clone-replace-disk.log
 ```
 
 ---
+
+## Common Proxmox VE Gotchas
+
+These issues come up repeatedly when running the converter suite on Proxmox VE.
+
+### API / Cluster Errors
+
+**Problem:** `API credentials not configured. Use --api-host and --api-token`
+
+**Workaround:** Pass `--api-host <host>`, `--api-token <token>`, and `--api-user <user>` on the command line, or export `API_HOST`, `API_TOKEN`, and `API_USER` (the default user is `root@pam`).
+
+**Problem:** `Cannot determine node for container <CTID>` / `Migration failed. Container is still on <NODE>`
+
+**Workaround:** Run the script from the Proxmox node that actually hosts the container or VM, or use `--migrate-to-local` to move the container to the local node first. You can verify the current node with:
+
+```bash
+pvesh get /nodes/<node>/lxc/<ctid>/status/current
+```
+
+### Storage Issues
+
+**Problem:** `Storage '<NAME>' is not active` / `Unable to determine status for storage '<NAME>' via pvesm status`
+
+**Workaround:** Activate the storage and confirm it is listed as active:
+
+```bash
+pvesm status
+# For LVM thin pools that are not active:
+lvchange -ay <vg>/<thinpool>
+```
+
+**Problem:** `Insufficient free space on '<STORAGE>'`
+
+**Workaround:** Free space, use a different storage, or set a smaller disk size. Avoid using `--skip-checks` unless you are certain the storage has room; the pre-check prevents failed conversions.
+
+**Problem:** `Host device /dev/urandom is missing. Proxmox tools may be broken (pvesm/pct/qm).`
+
+**Workaround:** This indicates a broken host `/dev` or `udev` state. Reboot the node or run `udevadm settle`, then verify `/dev/urandom` exists before continuing.
+
+### Container / VM State Issues
+
+**Problem:** `Failed to mount container <CTID>` or container keeps running during shrink/convert
+
+**Workaround:** Stop the container cleanly before the operation:
+
+```bash
+pct stop <ctid>
+# If still stuck:
+pct stop <ctid> --force
+```
+
+**Problem:** `Could not find disk for VM <VMID>` / `Could not resolve LV path`
+
+**Workaround:** Verify the disk reference and that the volume is accessible:
+
+```bash
+qm config <vmid>
+pvesm path <volid>
+# For LVM, ensure the LV is active:
+lvdisplay
+```
+
+### Conversion / Boot Issues
+
+**Problem:** `No kernel image found in .../boot after chroot install`
+
+**Workaround:** The container is missing a kernel package. On Debian/Ubuntu install `linux-image-amd64`; on Alpine ensure a kernel is present. The script attempts to install one, but the container's package repositories must be reachable.
+
+**Problem:** `No GRUB configuration found in converted image`
+
+**Workaround:** Install the correct GRUB package before conversion: `grub-pc` for BIOS, `grub-efi-amd64` for UEFI. Ensure the container can install packages from its configured repositories.
+
+**Problem:** VM boots to a black screen or UEFI shell
+
+**Workaround:** Set the matching BIOS type. For UEFI guests use:
+
+```bash
+qm set <vmid> --bios ovmf
+```
+
+For BIOS guests use `seabios`. Also make sure the source container installed a bootloader compatible with the chosen firmware.
+
+**Problem:** `Rsync failed. Resume with: ... --resume`
+
+**Workaround:** Fix the underlying issue (network, disk space, permissions), then re-run the same command plus `--resume`:
+
+```bash
+./lxc-to-vm.sh -c <ctid> -v <vmid> -s <storage> --resume
+```
+
+### Shrink / Expand Issues
+
+**Problem:** `resize2fs failed after 5 attempts. Container disk unchanged.`
+
+**Workaround:** The target size is likely too small or the filesystem is too full. Use a larger headroom or expand the filesystem manually after the operation.
+
+**Problem:** Proxmox shows a larger disk but the guest OS still reports the old size
+
+**Workaround:** Use `clone-replace-disk.sh` to create a fresh disk with the correct size, or grow the filesystem inside the guest:
+
+```bash
+# Inside the guest (ext4):
+resize2fs /dev/sda1
+# (xfs):
+xfs_growfs /
+```
+
+**Problem:** `EFI partition device <...> did not appear`
+
+**Workaround:** Ensure the `nbd` module is loaded with enough partitions:
+
+```bash
+modprobe nbd max_part=8
+```
+
+Also check that no other process is already using `/dev/nbd0`.
+
+### Export Issues
+
+**Problem:** S3 / NFS / SSH export fails after conversion
+
+**Workaround:** Verify the destination is reachable and configured:
+
+- **S3**: `aws` CLI must be installed and credentials configured.
+- **NFS**: The share must already be mounted where the script expects.
+- **SSH**: Key-based authentication must be set up and the remote path must exist.
+
+### Hook Issues
+
+**Problem:** Hook script exits with a non-fatal error
+
+**Workaround:** Make the hook executable and syntax-check it before use:
+
+```bash
+chmod +x /var/lib/lxc-to-vm/hooks/<hook>.sh
+bash -n /var/lib/lxc-to-vm/hooks/<hook>.sh
+```
 
 ## Getting Help
 
