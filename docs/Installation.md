@@ -28,7 +28,7 @@ Complete installation and setup guide for the Proxmox LXC ↔️ VM Converter su
 
 | Component | Requirement |
 | --------- | ----------- |
-| **OS** | Proxmox VE 7.x or 8.x |
+| **OS** | Proxmox VE 7.x, 8.x, or 9.x |
 | **Access** | Root access (or sudo privileges) |
 | **Shell** | Bash 4.0+ |
 | **Network** | Internet connection for dependency installation |

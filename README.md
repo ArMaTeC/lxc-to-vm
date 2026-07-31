@@ -230,7 +230,7 @@ sudo ./test-remote-pve.sh
 
 ## 📦 Requirements
 
-- Proxmox VE 7.x or 8.x
+- Proxmox VE 7.x, 8.x, or 9.x
 - Root access on Proxmox host
 - Bash 4.0+
 
