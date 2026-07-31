@@ -80,7 +80,7 @@ The scripts automatically install required packages:
 ### One-Liner Download
 
 ```bash
-# Download all scripts into ~/lxc-to-vm
+# Download all scripts and the lib/ folder into ~/lxc-to-vm
 mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh -o vm-to-lxc.sh \
@@ -89,6 +89,10 @@ mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh -o shrink-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh -o expand-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh -o clone-replace-disk.sh \
+  && mkdir -p lib \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/common.sh -o lib/common.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/os-detect.sh -o lib/os-detect.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/windows-disk.sh -o lib/windows-disk.sh \
   && chmod +x *.sh
 ```
 
@@ -120,6 +124,12 @@ curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-lxc.sh
 curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh
 curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh
 curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh
+
+# Download required shared libraries
+mkdir -p lib
+curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/common.sh -o lib/common.sh
+curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/os-detect.sh -o lib/os-detect.sh
+curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/windows-disk.sh -o lib/windows-disk.sh
 
 # Make executable
 chmod +x *.sh
@@ -170,6 +180,10 @@ cp clone-replace-disk.sh /usr/local/bin/clone-replace-disk
 chmod +x /usr/local/bin/lxc-to-vm /usr/local/bin/vm-to-lxc /usr/local/bin/shrink-lxc \
   /usr/local/bin/expand-lxc /usr/local/bin/shrink-vm /usr/local/bin/expand-vm \
   /usr/local/bin/clone-replace-disk
+
+# Copy shared libraries alongside the binaries; the scripts source them from the same directory
+mkdir -p /usr/local/bin/lib
+cp lib/common.sh lib/os-detect.sh lib/windows-disk.sh /usr/local/bin/lib/
 
 # Create hook directories
 mkdir -p /var/lib/lxc-to-vm/hooks /var/lib/lxc-to-vm/profiles /var/lib/lxc-to-vm/resume
@@ -250,12 +264,12 @@ which lxc-to-vm vm-to-lxc shrink-lxc expand-lxc shrink-vm expand-vm clone-replac
 
 # Check versions
 lxc-to-vm --version         # Should show 6.0.6
-vm-to-lxc --version         # Should show 6.0.6
+vm-to-lxc --version         # Should show 1.0.0
 shrink-lxc --version        # Should show 6.0.6
 expand-lxc --version        # Should show 6.0.0
-shrink-vm --version         # Should show 6.0.0
-expand-vm --version         # Should show 6.0.0
-clone-replace-disk --version # Should show 1.0.0
+shrink-vm --version         # Should show 6.1.0
+expand-vm --version         # Should show 6.1.0
+clone-replace-disk --version # Should show 1.1.0
 
 # Test help output
 lxc-to-vm --help

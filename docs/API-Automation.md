@@ -166,6 +166,10 @@ convert_lxc_to_vm:
   script:
     - apt-get update && apt-get install -y curl
     - curl -O https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
+    - mkdir -p lib
+    - curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/common.sh -o lib/common.sh
+    - curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/os-detect.sh -o lib/os-detect.sh
+    - curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/windows-disk.sh -o lib/windows-disk.sh
     - chmod +x lxc-to-vm.sh
     - ./lxc-to-vm.sh -c $CTID -v $VMID -s $STORAGE --start
   variables:
@@ -218,6 +222,22 @@ jobs:
         url: https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh
         dest: /tmp/lxc-to-vm.sh
         mode: '0755'
+
+    - name: Create lib directory
+      file:
+        path: /tmp/lib
+        state: directory
+        mode: '0755'
+
+    - name: Download required shared libraries
+      get_url:
+        url: "https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/{{ item }}"
+        dest: "/tmp/lib/{{ item }}"
+        mode: '0644'
+      with_items:
+        - common.sh
+        - os-detect.sh
+        - windows-disk.sh
 
     - name: Run conversion
       command: >

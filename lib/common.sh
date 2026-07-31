@@ -33,6 +33,62 @@ lib_source() {
     fi
 }
 
+### Function: get_proxmox_major_version
+# Detect the major version of the installed Proxmox VE environment.
+#
+# Outputs:
+#   The major version number, or 0 if it cannot be detected.
+get_proxmox_major_version() {
+    local version_str
+    version_str=$(pveversion 2>/dev/null | head -1)
+    if [[ -n "$version_str" && "$version_str" =~ pve-manager/([0-9]+)\. ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "0"
+    fi
+}
+
+### Function: get_first_storage_volid
+# Return the first volume ID found on a Proxmox storage, using the
+# pvesm output format that is available on this Proxmox VE version.
+#
+# Arguments:
+#   $1 - Storage name.
+#
+# Outputs:
+#   The first volume ID string, or nothing if the storage is empty or
+#   the volume cannot be determined.
+get_first_storage_volid() {
+    local storage="$1"
+    local pvesm_out pvesm_rc
+
+    pvesm_out=$(pvesm list "$storage" --output-format json 2>/dev/null)
+    pvesm_rc=$?
+    if [[ $pvesm_rc -eq 0 ]]; then
+        local volid
+        volid=$(printf '%s\n' "$pvesm_out" | grep -oP '"volid":"\K[^"]+' | head -1)
+        if [[ -n "$volid" ]]; then
+            echo "$volid"
+            return 0
+        fi
+    fi
+
+    pvesm_out=$(pvesm list "$storage" 2>/dev/null)
+    pvesm_rc=$?
+    if [[ $pvesm_rc -eq 0 ]]; then
+        local volid
+        # Text table output: the first whitespace-delimited token of the first
+        # data row (volid strings always contain a storage-identifier colon).
+        volid=$(printf '%s\n' "$pvesm_out" | awk '$0 ~ /:/{ print $1; exit }')
+        if [[ -n "$volid" ]]; then
+            echo "$volid"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 ### Function: check_target_collision
 # Check whether a target VM/CT ID already exists and ask before overwriting.
 #
@@ -101,6 +157,9 @@ check_target_space() {
     [[ -z "$storage" ]] && die "Storage name required for space check"
     [[ "$required_gb" =~ ^[0-9]+$ ]] || die "Required space must be an integer (GB)"
 
+    local first_volid
+    first_volid=$(get_first_storage_volid "$storage") || true
+
     local storage_type
     storage_type=$(pvesm status 2>/dev/null | awk -v s="$storage" 'NR>1 && $1==s{print $2; exit}')
     [[ -n "$storage_type" ]] || die "Storage '$storage' not found"
@@ -109,9 +168,7 @@ check_target_space() {
         lvmthin|lvm)
             local vg_name
             # Try to derive the VG from an existing volume on this storage
-            vg_name=$(pvesm list "$storage" --output-format json 2>/dev/null \
-                | grep -oP '"volid":"\K[^"]+' | head -1 \
-                | xargs -I{} pvesm path "{}" 2>/dev/null | cut -d'/' -f3)
+            [[ -n "$first_volid" ]] && vg_name=$(pvesm path "$first_volid" 2>/dev/null | cut -d'/' -f3)
             [[ -z "$vg_name" ]] && vg_name=$(vgs --noheadings -o vg_name 2>/dev/null | head -1 | tr -d ' ')
             [[ -n "$vg_name" ]] || die "Could not determine volume group for '$storage'"
             local free_mb
@@ -120,9 +177,7 @@ check_target_space() {
             ;;
         zfspool)
             local zfs_dataset
-            zfs_dataset=$(pvesm list "$storage" --output-format json 2>/dev/null \
-                | grep -oP '"volid":"\K[^"]+' | head -1 \
-                | xargs -I{} pvesm path "{}" 2>/dev/null | sed 's|/dev/zd0||')
+            [[ -n "$first_volid" ]] && zfs_dataset=$(pvesm path "$first_volid" 2>/dev/null | sed 's|/dev/zd0||')
             [[ -n "$zfs_dataset" ]] || die "Could not determine ZFS dataset for '$storage'"
             local avail_gb
             avail_gb=$(zfs list -H -o available "$zfs_dataset" 2>/dev/null | awk '{print $1}' | sed 's/G//i')
@@ -130,9 +185,7 @@ check_target_space() {
             ;;
         dir|nfs|cifs|glusterfs)
             local storage_path
-            storage_path=$(pvesm list "$storage" --output-format json 2>/dev/null \
-                | grep -oP '"volid":"\K[^"]+' | head -1 \
-                | xargs -I{} pvesm path "{}" 2>/dev/null | xargs dirname)
+            [[ -n "$first_volid" ]] && storage_path=$(pvesm path "$first_volid" 2>/dev/null | xargs dirname)
             [[ -z "$storage_path" || ! -d "$storage_path" ]] && storage_path=$(pvesm status 2>/dev/null | awk -v s="$storage" 'NR>1 && $1==s{print $7; exit}')
             [[ -n "$storage_path" && -d "$storage_path" ]] || die "Could not resolve path for '$storage'"
             local free_kb

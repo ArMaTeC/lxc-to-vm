@@ -53,7 +53,7 @@ following documentation is shipped with this repository:
 ### Installation
 
 ```bash
-# Download all scripts into ~/lxc-to-vm
+# Download all scripts and the lib/ folder into ~/lxc-to-vm
 mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh -o vm-to-lxc.sh \
@@ -63,6 +63,10 @@ mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh -o expand-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh -o clone-replace-disk.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/add-file-headers.sh -o add-file-headers.sh \
+  && mkdir -p lib \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/common.sh -o lib/common.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/os-detect.sh -o lib/os-detect.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/windows-disk.sh -o lib/windows-disk.sh \
   && chmod +x *.sh
 ```
 
@@ -248,7 +252,7 @@ lxc-to-vm/
 ├── test-remote-pve.sh    # Automated remote PVE test helper
 ├── test-remote-pve.ps1   # PowerShell remote PVE test helper
 ├── add-file-headers.sh   # File header automation tool
-├── lib/                  # Shared shell libraries (os-detect, windows-disk)
+├── lib/                  # Shared shell libraries (common, os-detect, windows-disk)
 ├── examples/             # Hook examples for lxc-to-vm
 ├── docs/                 # Wiki source files
 ├── CHANGELOG.md          # Version history

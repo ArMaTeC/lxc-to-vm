@@ -44,7 +44,7 @@ This project provides bidirectional conversion between Proxmox VE LXC containers
 ## 🚀 Quick Start
 
 ```bash
-# Download all scripts into a lxc-to-vm folder
+# Download all scripts and the lib/ folder into a lxc-to-vm folder
 mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lxc-to-vm.sh -o lxc-to-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/vm-to-lxc.sh -o vm-to-lxc.sh \
@@ -53,6 +53,10 @@ mkdir -p ~/lxc-to-vm && cd ~/lxc-to-vm \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/shrink-vm.sh -o shrink-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/expand-vm.sh -o expand-vm.sh \
   && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/clone-replace-disk.sh -o clone-replace-disk.sh \
+  && mkdir -p lib \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/common.sh -o lib/common.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/os-detect.sh -o lib/os-detect.sh \
+  && curl -fsSL https://raw.githubusercontent.com/ArMaTeC/lxc-to-vm/main/lib/windows-disk.sh -o lib/windows-disk.sh \
   && chmod +x *.sh
 
 # Run from the folder (cd ~/lxc-to-vm first if needed)

@@ -121,6 +121,13 @@ checkpoint() {
 # Exits: With E_INVALID_ARG (1)
 die() { err "$*"; exit "${E_INVALID_ARG}"; }
 
+# Source shared library functions (e.g., check_target_space)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/lib/common.sh"
+fi
+
 # Dump system information for debugging purposes
 # Outputs: System info to log file when DEBUG is enabled
 dump_system_info() {
