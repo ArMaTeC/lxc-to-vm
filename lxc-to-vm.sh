@@ -312,6 +312,7 @@ Options:
   -d, --disk-size <GB>   Disk size in GB (omit for predictive advisor)
   -f, --format <FMT>     Disk format: qcow2 (default) | raw | vmdk
   -b, --bridge <NAME>    Network bridge (default: vmbr0)
+  -p, --pkg <PKG>        Install additional packages
   -t, --temp-dir <PATH>  Working directory for temp image (default: /var/lib/vz/dump)
   -B, --bios <TYPE>      Firmware type: seabios (default) | ovmf (UEFI)
   -n, --dry-run          Show what would be done without making changes
@@ -1267,6 +1268,7 @@ EXPORT_DEST="" AS_TEMPLATE=false SYSPREP=false
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
 AUTO_FIX=true SKIP_CHECKS=false
 CLEANUP_EXISTING_VM=false
+PKG_ADDON=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1276,6 +1278,7 @@ while [[ $# -gt 0 ]]; do
         -d|--disk-size)  DISK_SIZE="$2";   shift 2 ;;
         -f|--format)     DISK_FORMAT="$2";  shift 2 ;;
         -b|--bridge)     BRIDGE="$2";      shift 2 ;;
+        -p|--pkg)        PKG_ADDON="$2";    shift 2 ;;
         -t|--temp-dir)   WORK_DIR="$2";    shift 2 ;;
         -B|--bios)       BIOS_TYPE="$2";   shift 2 ;;
         -n|--dry-run)    DRY_RUN=true;      shift ;;
@@ -2774,8 +2777,8 @@ case "$DISTRO_FAMILY" in
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_EFI
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent e2fsprogs 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent e2fsprogs
+apt-get install -y linux-image-generic systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent e2fsprogs ${PKG_ADDON} 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-efi-amd64 udev dbus qemu-guest-agent e2fsprogs ${PKG_ADDON}
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --recheck --no-nvram --force --removable
 # Force rw root remount on boot. Some converted guests can otherwise remain on
 # kernel cmdline default 'ro' if remount service runs in a constrained context.
@@ -2795,8 +2798,8 @@ DEBIAN_EFI
             cat >> "$CHROOT_SCRIPT" <<DEBIAN_BIOS
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent e2fsprogs 2>/dev/null \
-    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent e2fsprogs
+apt-get install -y linux-image-generic systemd-sysv grub-pc udev dbus qemu-guest-agent e2fsprogs ${PKG_ADDON} 2>/dev/null \
+    || apt-get install -y linux-image-amd64 systemd-sysv grub-pc udev dbus qemu-guest-agent e2fsprogs ${PKG_ADDON}
 rm -f /tmp/lxc-to-vm-grub-bios-fallback.flag
 GRUB_INSTALL_OK=0
 if grub-install --target=i386-pc --recheck --force --skip-fs-probe "${LOOP_DEV}"; then
@@ -2860,8 +2863,8 @@ ALPINE_BIOS
             cat >> "$CHROOT_SCRIPT" <<'RHEL_EFI'
 PKG_MGR=""
 if command -v dnf >/dev/null 2>&1; then PKG_MGR="dnf"; else PKG_MGR="yum"; fi
-${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2-efi-x64 grub2-efi-x64-modules shim-x64 efibootmgr qemu-guest-agent e2fsprogs 2>/dev/null \
-    || ${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2-efi-x64 shim-x64 efibootmgr qemu-guest-agent e2fsprogs
+${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2-efi-x64 grub2-efi-x64-modules shim-x64 efibootmgr qemu-guest-agent e2fsprogs ${PKG_ADDON} 2>/dev/null \
+    || ${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2-efi-x64 shim-x64 efibootmgr qemu-guest-agent e2fsprogs ${PKG_ADDON}
 
 if [ ! -e /sbin/init ]; then
     if [ -x /usr/lib/systemd/systemd ]; then
@@ -2901,8 +2904,8 @@ RHEL_BIOS_LOOPDEV
             cat >> "$CHROOT_SCRIPT" <<'RHEL_BIOS'
 PKG_MGR=""
 if command -v dnf >/dev/null 2>&1; then PKG_MGR="dnf"; else PKG_MGR="yum"; fi
-${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2 grub2-pc qemu-guest-agent e2fsprogs 2>/dev/null \
-    || ${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2 qemu-guest-agent e2fsprogs
+${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2 grub2-pc qemu-guest-agent e2fsprogs ${PKG_ADDON} 2>/dev/null \
+    || ${PKG_MGR} install -y kernel systemd systemd-udev dracut grub2 qemu-guest-agent e2fsprogs ${PKG_ADDON}
 
 if [ ! -e /sbin/init ]; then
     if [ -x /usr/lib/systemd/systemd ]; then
