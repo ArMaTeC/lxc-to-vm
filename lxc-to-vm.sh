@@ -1925,7 +1925,7 @@ if ! pct config "$CTID" >/dev/null 2>&1; then
 fi
 
 if qm config "$VMID" >/dev/null 2>&1; then
-    local replace_arg=""
+    replace_arg=""
     $CLEANUP_EXISTING_VM && replace_arg="true"
     if check_target_collision vm "$VMID" "$replace_arg"; then
         destroy_vm_if_exists "$VMID"
@@ -3560,7 +3560,7 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
     fi
 
     if qm config "$VMID" >/dev/null 2>&1; then
-        local replace_arg=""
+        replace_arg=""
         $CLEANUP_EXISTING_VM && replace_arg="true"
         if check_target_collision vm "$VMID" "$replace_arg"; then
             destroy_vm_if_exists "$VMID"

@@ -182,8 +182,8 @@ _detect_via_partition_types() {
     if [[ "$OS_TYPE" == "unknown" && "$OS_HAS_ESP" == "true" ]]; then
         if command -v ntfscluster &>/dev/null; then
             if ntfscluster "$disk_path" &>/dev/null || \
-               ntfscluster "${disk_path}p1" &>/dev/null 2>/dev/null || \
-               ntfscluster "${disk_path}1" &>/dev/null 2>/dev/null; then
+               ntfscluster "${disk_path}p1" &>/dev/null || \
+               ntfscluster "${disk_path}1" &>/dev/null; then
                 OS_TYPE="windows"
                 OS_DISTRO="windows"
             fi

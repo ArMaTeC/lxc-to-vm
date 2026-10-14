@@ -815,7 +815,7 @@ ensure_dependency qemu-img qemu-utils
 
 qm config "$VMID" >/dev/null 2>&1 || die "VM $VMID does not exist."
 if pct config "$CTID" >/dev/null 2>&1; then
-    local replace_arg=""
+    replace_arg=""
     $CLEANUP_EXISTING_CT && replace_arg="true"
     if check_target_collision ct "$CTID" "$replace_arg"; then
         destroy_ct_if_exists "$CTID"
