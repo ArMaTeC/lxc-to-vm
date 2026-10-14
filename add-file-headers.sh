@@ -14,7 +14,7 @@ set -euo pipefail
 # Configuration
 # ============================================================================
 
-readonly VERSION="1.0.0"
+readonly VERSION="6.1.1"
 readonly LOG_FILE="/var/log/add-file-headers.log"
 readonly MARKER="### lxc-to-vm file header ###"
 

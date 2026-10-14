@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-readonly VERSION="0.1.0"
+readonly VERSION="6.1.1"
 
 # ------------------------------------------------------------------------------
 # Helpers

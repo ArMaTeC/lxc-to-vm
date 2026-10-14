@@ -9,7 +9,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="6.1.0"
+readonly VERSION="6.1.1"
 readonly LOG_FILE="/var/log/shrink-vm.log"
 readonly DEFAULT_HEADROOM_GB=2
 
