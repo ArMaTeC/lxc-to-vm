@@ -32,7 +32,7 @@ What actually happened.
 
 ## Log Output
 
-```
+```text
 # Paste relevant lines from /var/log/lxc-to-vm.log
 ```
 

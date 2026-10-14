@@ -14,7 +14,7 @@ points of the `lxc-to-vm` toolkit for contributors and advanced users.
 
 ## Project Layout
 
-```
+```text
 lxc-to-vm/
 ├── lxc-to-vm.sh           # Main LXC → VM converter
 ├── vm-to-lxc.sh           # Main VM → LXC converter
@@ -97,7 +97,7 @@ Logging helpers and trivial one-liners are documented inline where helpful.
 
 ## LXC → VM Conversion Flow (`lxc-to-vm.sh`)
 
-```
+```text
 Input validation
       │
       ▼
@@ -140,7 +140,7 @@ Key phases are instrumented with `run_hook` so users can inject custom logic.
 
 ## VM → LXC Conversion Flow (`vm-to-lxc.sh`)
 
-```
+```text
 Input validation
       │
       ▼

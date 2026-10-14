@@ -424,9 +424,9 @@ and optionally updates the guest configuration.
 
 Validates the toolkit against a remote Proxmox VE host over SSH.
 
-| Function | Purpose |
-|----------|---------|
-| `ssh_cmd` | Run a command on the remote PVE host via `sshpass`/SSH. |
+| Function  | Purpose                                                    |
+|-----------|------------------------------------------------------------|
+| `ssh_cmd` | Run a command on the remote PVE host via `sshpass`/SSH.    |
 | `scp_cmd` | Copy a file to/from the remote PVE host via `sshpass`/SCP. |
 
 The script then runs a sequence of upload, dependency, and conversion smoke
