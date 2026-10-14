@@ -12,6 +12,8 @@
 
 set -euo pipefail
 
+readonly VERSION="0.1.0"
+
 # ------------------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------------------
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --no-tag)     DO_TAG=false;      shift ;;
         --no-push)    DO_PUSH=false;     shift ;;
         -n|--dry-run) DRY_RUN=true;      shift ;;
+        -V)           echo "v${VERSION}";  exit 0 ;;
         -h|--help)    usage ;;
         *)            die "Unknown option: $1 (use --help)" ;;
     esac
