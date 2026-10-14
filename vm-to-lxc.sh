@@ -20,7 +20,7 @@ if [[ "${DEBUG:-0}" -eq 1 ]]; then
     set -x
 fi
 
-readonly VERSION="6.1.1"
+readonly VERSION="6.2.0"
 
 # ==============================================================================
 # CONSTANTS

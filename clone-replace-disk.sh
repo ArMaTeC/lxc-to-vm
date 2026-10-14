@@ -9,7 +9,7 @@
 
 set -Eeuo pipefail
 
-readonly VERSION="6.1.1"
+readonly VERSION="6.2.0"
 readonly LOG_FILE="/var/log/clone-replace-disk.log"
 
 # ==============================================================================
