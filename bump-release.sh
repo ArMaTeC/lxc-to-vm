@@ -85,9 +85,25 @@ CURRENT_VERSION="$(grep -m1 'readonly VERSION="' "$SCRIPT_FILE" | sed 's/.*reado
 [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || die "Could not parse readonly VERSION in $SCRIPT_FILE (got: '$CURRENT_VERSION')"
 
+# Release tags are repo-wide, so the bump base is the higher of the script's
+# VERSION and the latest existing vX.Y.Z tag. This keeps a script that has
+# drifted behind the tag history (e.g. VERSION=6.0.6 while v6.0.8 is tagged)
+# from proposing a release tag that already exists.
+LATEST_TAG_VERSION="$(git tag -l 'v*' | sed 's/^v//' \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+
+BASE_VERSION="$CURRENT_VERSION"
+if [[ -n "$LATEST_TAG_VERSION" ]]; then
+    HIGHER="$(printf '%s\n%s\n' "$CURRENT_VERSION" "$LATEST_TAG_VERSION" | sort -V | tail -1)"
+    if [[ "$HIGHER" == "$LATEST_TAG_VERSION" && "$LATEST_TAG_VERSION" != "$CURRENT_VERSION" ]]; then
+        warn "Script VERSION ($CURRENT_VERSION) is behind latest tag v$LATEST_TAG_VERSION — syncing to the tag's release line."
+        BASE_VERSION="$LATEST_TAG_VERSION"
+    fi
+fi
+
 # Compute new version
 if [[ -z "$NEW_VERSION" ]]; then
-    IFS=. read -r v_major v_minor v_patch <<< "$CURRENT_VERSION"
+    IFS=. read -r v_major v_minor v_patch <<< "$BASE_VERSION"
     case "$BUMP_TYPE" in
         patch) NEW_VERSION="${v_major}.${v_minor}.$((v_patch + 1))" ;;
         minor) NEW_VERSION="${v_major}.$((v_minor + 1)).0" ;;
@@ -104,7 +120,7 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
 fi
 
 log "Script:   $SCRIPT_FILE"
-log "Version:  $CURRENT_VERSION -> $NEW_VERSION"
+log "Version:  $CURRENT_VERSION -> $NEW_VERSION (base: $BASE_VERSION)"
 log "Branch:   $BRANCH"
 log "Tag:      $TAG$($DO_TAG || printf ' (skipped)')"
 log "Push:     $DO_PUSH"
