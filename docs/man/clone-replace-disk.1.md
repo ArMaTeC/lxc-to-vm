@@ -1,3 +1,9 @@
+<!-- ==============================================================================
+     ### lxc-to-vm file header ###
+     File: clone-replace-disk.1.md
+     Description: Clone replace disk.1
+     License: MIT
+     ============================================================================== -->
 % CLONE-REPLACE-DISK(1) lxc-to-vm 6.0.6
 
 # NAME
