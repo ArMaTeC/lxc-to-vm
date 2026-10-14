@@ -25,7 +25,7 @@ appearance in the file.
 #### `lib_source`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `lib_source <lib_name>` |
 | **Purpose** | Source a sibling library from the same directory by filename. |
 | **Arguments** | `$1` — Name of the library file to source (e.g., `os-detect.sh`). |
@@ -42,7 +42,7 @@ first and falling back to partition-table heuristics.
 #### `detect_os_from_disk`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `detect_os_from_disk <disk_path> [img_format]` |
 | **Purpose** | Detect the operating system installed on a disk image. |
 | **Arguments** | `$1` — Path to the disk image to inspect.<br>`$2` — Disk image format (default: `raw`). |
@@ -54,7 +54,7 @@ first and falling back to partition-table heuristics.
 Internal helper that parses `virt-inspector` XML output.
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `_detect_via_guestfs <disk_path> [img_format]` |
 | **Purpose** | Detect OS details using `virt-inspector` (libguestfs). |
 | **Globals set** | `OS_TYPE`, `OS_DISTRO`, `OS_VERSION`, `OS_BOOT_MODE`, `OS_PARTITION_TABLE`, `OS_HAS_ESP` |
@@ -65,7 +65,7 @@ Internal helper that parses `virt-inspector` XML output.
 Internal fallback heuristic based on `fdisk`/`parted` partition tables and `file` output.
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `_detect_via_partition_types <disk_path>` |
 | **Purpose** | Detect OS details from partition table heuristics. |
 | **Globals set** | `OS_TYPE`, `OS_DISTRO`, `OS_BOOT_MODE`, `OS_PARTITION_TABLE`, `OS_HAS_ESP` |
@@ -81,7 +81,7 @@ and `clone-replace-disk.sh`.
 #### `windows_check_ntfs`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `windows_check_ntfs <disk_path> [log_file]` |
 | **Purpose** | Check NTFS consistency on a disk image or block device using `guestfish` or `ntfsfix`. |
 | **Arguments** | `$1` — Path to the disk image or block device.<br>`$2` — Log file path (default: `/var/log/windows-disk.log`). |
@@ -90,7 +90,7 @@ and `clone-replace-disk.sh`.
 #### `windows_shrink_libguestfs`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `windows_shrink_libguestfs <disk_path> <new_size_gb> [img_format] [vmid]` |
 | **Purpose** | Shrink a Windows disk image to a target size using `virt-resize`. |
 | **Returns** | `0` on success; `1` if `virt-resize` is unavailable or fails. |
@@ -98,7 +98,7 @@ and `clone-replace-disk.sh`.
 #### `windows_shrink_ntfsresize`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `windows_shrink_ntfsresize <disk_path> <new_size_gb> [img_format] [vmid]` |
 | **Purpose** | Shrink a Windows disk image using `ntfsresize` as a fallback. |
 | **Returns** | `0` on success; exits via `die()` on critical errors. |
@@ -106,7 +106,7 @@ and `clone-replace-disk.sh`.
 #### `windows_expand_libguestfs`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `windows_expand_libguestfs <disk_path> <new_size_gb> [img_format] [vmid]` |
 | **Purpose** | Expand a Windows disk image to a target size using `virt-resize`. |
 | **Returns** | `0` on success; `1` on failure. |
@@ -114,7 +114,7 @@ and `clone-replace-disk.sh`.
 #### `windows_expand_ntfsresize`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `windows_expand_ntfsresize <disk_path> <new_size_gb> [img_format] [vmid]` |
 | **Purpose** | Expand a Windows disk image using `ntfsresize` as a fallback. |
 | **Returns** | `0` on success; exits via `die()` on critical errors. |
@@ -122,7 +122,7 @@ and `clone-replace-disk.sh`.
 #### `windows_clone_disk`
 
 | | |
-|---|---|
+| --- | --- |
 | **Signature** | `windows_clone_disk <source_disk> <target_disk> [new_size_gb] [img_format]` |
 | **Purpose** | Clone a Windows disk to a new image, optionally expanding it. |
 | **Returns** | `0` on success; exits via `die()` on critical errors. |
@@ -138,7 +138,7 @@ Converts Proxmox LXC containers into bootable QEMU/KVM virtual machines.
 #### Logging / Formatting Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `e` | Echo with backslash escape interpretation. |
 | `log` | Print an info message to stdout and `$LOG_FILE`. |
 | `warn` | Print a warning message to stdout and `$LOG_FILE`. |
@@ -152,7 +152,7 @@ Converts Proxmox LXC containers into bootable QEMU/KVM virtual machines.
 #### Diagnostic / Setup Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `dump_system_info` | Dump host system information to the log when debugging. |
 | `dump_container_info` | Dump source container configuration and guest OS to the log when debugging. |
 | `pct_mount_retry` | Retry `pct mount` after `pct unlock` if `AUTO_FIX` is enabled. |
@@ -167,7 +167,7 @@ Converts Proxmox LXC containers into bootable QEMU/KVM virtual machines.
 #### Cluster / API Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `get_cluster_info` | Locate the Proxmox node that hosts a container. |
 | `pve_api_call` | Perform an authenticated call to the Proxmox VE API. |
 | `migrate_container_to_local` | Migrate a container from a remote cluster node to the local node. |
@@ -175,7 +175,7 @@ Converts Proxmox LXC containers into bootable QEMU/KVM virtual machines.
 #### Hook / Profile / Resume Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `run_hook` | Execute a user-supplied hook script for a given conversion stage. |
 | `analyze_growth_pattern` | Analyze historical log data to recommend a disk size. |
 | `get_size_recommendation` | Display a user-friendly size recommendation for a container. |
@@ -195,7 +195,7 @@ Converts Proxmox LXC containers into bootable QEMU/KVM virtual machines.
 #### Batch / Wizard Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `process_batch_file` | Process a file containing `CTID,VMID` conversion pairs. |
 | `process_range` | Expand a range specification like `100-110:200-210`. |
 | `run_single_conversion` | Run one LXC→VM conversion end-to-end. |
@@ -208,7 +208,7 @@ Converts Proxmox LXC containers into bootable QEMU/KVM virtual machines.
 #### Export / Template Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `export_vm_disk` | Export a converted VM disk to S3, NFS, SSH, or local path. |
 | `convert_to_template` | Convert a VM to a Proxmox template. |
 | `run_sysprep` | Clean a template (remove SSH keys, machine-id, etc.). |
@@ -216,7 +216,7 @@ Converts Proxmox LXC containers into bootable QEMU/KVM virtual machines.
 #### Core Conversion Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `check_space` | Check whether a path has at least the requested free space. |
 | `pick_work_dir` | Choose a working directory with sufficient free space. |
 | `do_conversion` | Perform the full LXC→VM conversion (the main workflow). |
@@ -233,7 +233,7 @@ Converts QEMU/KVM virtual machines back into Proxmox LXC containers.
 #### Logging / Formatting Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `e` | Echo with backslash escape interpretation. |
 | `log` | Print an info message to stdout and `$LOG_FILE`. |
 | `warn` | Print a warning message to stdout and `$LOG_FILE`. |
@@ -247,7 +247,7 @@ Converts QEMU/KVM virtual machines back into Proxmox LXC containers.
 #### Diagnostic / Setup Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `dump_system_info` | Dump host system information to the log when debugging. |
 | `dump_vm_info` | Dump source VM configuration to the log when debugging. |
 | `destroy_ct_if_exists` | Stop and destroy an existing container when `--replace-ct` is used. |
@@ -261,7 +261,7 @@ Converts QEMU/KVM virtual machines back into Proxmox LXC containers.
 #### Cluster / API Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `get_cluster_info` | Locate the Proxmox node that hosts a VM. |
 | `pve_api_call` | Perform an authenticated call to the Proxmox VE API. |
 | `migrate_vm_to_local` | Migrate a VM from a remote cluster node to the local node. |
@@ -269,7 +269,7 @@ Converts QEMU/KVM virtual machines back into Proxmox LXC containers.
 #### Hook / Profile / Resume Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `run_hook` | Execute a user-supplied hook script for a given conversion stage. |
 | `get_size_recommendation` | Recommend a container disk size from VM filesystem usage. |
 | `ensure_profile_dir` | Ensure the profile directory exists. |
@@ -288,7 +288,7 @@ Converts QEMU/KVM virtual machines back into Proxmox LXC containers.
 #### Batch / Wizard Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `process_batch_file` | Process a file containing `VMID,CTID` conversion pairs. |
 | `process_range` | Expand a range specification like `100-110:200-210`. |
 | `run_single_conversion` | Run one VM→LXC conversion end-to-end. |
@@ -300,7 +300,7 @@ Converts QEMU/KVM virtual machines back into Proxmox LXC containers.
 #### Core Conversion Helpers
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `check_space` | Return available space (MB) on a path. |
 | `pick_work_dir` | Choose a working directory with sufficient free space. |
 | `do_conversion` | Perform the full VM→LXC conversion (the main workflow). |
@@ -314,7 +314,7 @@ Converts QEMU/KVM virtual machines back into Proxmox LXC containers.
 Shrinks an LXC container root disk to actual usage plus configurable headroom.
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `debug` | Print debug messages when `DEBUG=1`. |
 | `verbose` | Print verbose messages to log, optionally to console. |
 | `e` | Echo with escape interpretation. |
@@ -339,7 +339,7 @@ Expands an LXC container root disk using absolute, additive, percentage, or
 maximum-available modes.
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `debug` | Print debug messages when `DEBUG=1`. |
 | `verbose` | Print verbose messages. |
 | `e` | Echo with escape interpretation. |
@@ -360,7 +360,7 @@ maximum-available modes.
 Shrinks a VM disk to actual filesystem usage plus headroom.
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `debug` | Print debug messages when `DEBUG=1`. |
 | `verbose` | Print verbose messages. |
 | `e` | Echo with escape interpretation. |
@@ -381,7 +381,7 @@ image truncation, and VM recreation.
 Expands a VM disk to an absolute or additive target size.
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `debug` | Print debug messages when `DEBUG=1`. |
 | `verbose` | Print verbose messages. |
 | `e` | Echo with escape interpretation. |
@@ -402,7 +402,7 @@ Expands a VM disk to an absolute or additive target size.
 Clones a VM or LXC disk and optionally replaces it in the original guest.
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `debug` | Print debug messages when `DEBUG=1`. |
 | `verbose` | Print verbose messages. |
 | `e` | Echo with escape interpretation. |
@@ -439,7 +439,7 @@ tests against the remote node.
 Maintains the standardized file-header comments across the repository.
 
 | Function | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `usage` | Display help and exit. |
 | `die` | Print a fatal error and exit with a custom code. |
 | `log_msg` | Append a timestamped message to the script log. |
@@ -458,7 +458,7 @@ Maintains the standardized file-header comments across the repository.
 Most scripts use the following stable exit codes for programmatic error handling:
 
 | Code | Name | Meaning |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `0` | `SUCCESS` | Operation completed successfully. |
 | `1` | `E_INVALID_ARG` | Invalid arguments or generic failure. |
 | `2` | `E_NOT_FOUND` | Container, VM, or resource not found. |
