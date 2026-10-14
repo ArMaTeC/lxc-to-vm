@@ -4,6 +4,7 @@
      Description: Vm to lxc.1
      License: MIT
      ============================================================================== -->
+<!-- markdownlint-disable MD041 -->
 % VM-TO-LXC(1) lxc-to-vm 6.0.6
 
 # NAME

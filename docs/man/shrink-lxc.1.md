@@ -4,6 +4,7 @@
      Description: Shrink lxc.1
      License: MIT
      ============================================================================== -->
+<!-- markdownlint-disable MD041 -->
 % SHRINK-LXC(1) lxc-to-vm 6.0.6
 
 # NAME

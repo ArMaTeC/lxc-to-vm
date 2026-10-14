@@ -12,12 +12,12 @@ We take the security of our project seriously and appreciate your efforts to res
 
 The following table indicates which versions of our project are currently supported with security updates. We highly recommend using a supported version to ensure you receive the latest security patches.
 
-| Version | Supported Status    | Notes                                                    |
-| :------ | :------------------ | :------------------------------------------------------- |
-| **6.x** | :white_check_mark:  | **Actively maintained and receiving security updates.**  |
-| **5.x** | :x: Not Supported   | **End-of-life.** No further security updates will be provided. |
-| **4.x** | :x: Not Supported   | **End-of-life.** No further security updates will be provided. |
-| **< 4.0** | :x: Not Supported   | **End-of-life.** No further security updates will be provided. |
+| Version   | Supported Status   | Notes                                                          |
+|:----------|:-------------------|:---------------------------------------------------------------|
+| **6.x**   | :white_check_mark: | **Actively maintained and receiving security updates.**        |
+| **5.x**   | :x: Not Supported  | **End-of-life.** No further security updates will be provided. |
+| **4.x**   | :x: Not Supported  | **End-of-life.** No further security updates will be provided. |
+| **< 4.0** | :x: Not Supported  | **End-of-life.** No further security updates will be provided. |
 
 ## Reporting a Vulnerability
 
