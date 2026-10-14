@@ -89,6 +89,9 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --start
 
 # Shrink + Convert
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
+
+# Convert and install extra packages in the guest (works with apt/dnf/yum/apk/pacman)
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 -p "curl htop" --start
 ```
 
 ### Expand LXC (Standalone)

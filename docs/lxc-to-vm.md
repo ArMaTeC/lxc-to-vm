@@ -76,6 +76,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 | `-s` | `--storage` | Proxmox storage name | Prompted |
 | `-d` | `--disk-size` | Disk size in GB (e.g., 10G) | Auto-calculated |
 | `-b` | `--bridge` | Network bridge | `vmbr0` |
+| `-p` | `--pkg` | Extra packages to install in the guest (comma/space separated, repeatable) | — |
 | `-t` | `--temp-dir` | Working directory | `/var/lib/vz/dump` |
 | `-n` | `--dry-run` | Preview without changes | — |
 | `-S` | `--start` | Auto-start after conversion | — |

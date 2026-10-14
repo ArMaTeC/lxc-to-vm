@@ -35,6 +35,13 @@ and remote cluster migration.
 **-b, --bridge** *NAME*
 : Network bridge (default: `vmbr0`).
 
+**-p, --pkg, --packages** *PKGS*
+: Extra packages to install inside the guest during conversion. Comma- or
+  space-separated and may be repeated. The package manager is detected inside
+  the guest (`apt-get`, `dnf`, `yum`, `apk`, `pacman`, `zypper`), so it works
+  across all supported distro families. Failures warn without aborting the
+  conversion.
+
 **-t, --temp-dir** *PATH*
 : Working directory for temporary images (default: `/var/lib/vz/dump`).
 
