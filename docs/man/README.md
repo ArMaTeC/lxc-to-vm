@@ -19,7 +19,7 @@ Or viewed directly as Markdown in any standard Markdown viewer.
 ## Available Pages
 
 | Page | Description |
-|------|-------------|
+| ------ | ------------- |
 | `lxc-to-vm.1.md` | Convert LXC containers to KVM VMs |
 | `vm-to-lxc.1.md` | Convert KVM VMs to LXC containers |
 | `shrink-lxc.1.md` | Shrink LXC root disk |

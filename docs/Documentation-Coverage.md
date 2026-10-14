@@ -12,7 +12,7 @@ Generated during the documentation pass for the `lxc-to-vm` project.
 ## New and Updated Documentation
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `README.md` | Updated with a documentation index linking to all new guides. |
 | `docs/Function-Reference.md` | Complete function reference grouped by source file. |
 | `docs/Internals.md` | Architecture, data flow, conventions, and contributor guide. |
@@ -31,7 +31,7 @@ The table below counts functions per file and the number that now carry a
 standardized `### Function: <name>` header comment.
 
 | File | Functions | Documented | Coverage |
-|------|-----------|------------|----------|
+| ------ | ----------- | ------------ | ---------- |
 | `lxc-to-vm.sh` | 54 | 37 | 68.5% |
 | `vm-to-lxc.sh` | 45 | 22 | 48.9% |
 | `shrink-lxc.sh` | 12 | 11 | 91.7% |
