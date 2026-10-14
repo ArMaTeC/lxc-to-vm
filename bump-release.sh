@@ -3,9 +3,10 @@
 # ==============================================================================
 # ### lxc-to-vm file header ###
 # File: bump-release.sh
-# Description: Bump a script's VERSION constant, rotate the CHANGELOG
-#              [Unreleased] section, commit, tag vX.Y.Z, and push — which
-#              triggers the GitHub release workflow (.github/workflows/release.yml).
+# Description: Bump the readonly VERSION of every script changed since the last
+#              release tag, rotate the CHANGELOG [Unreleased] section, commit,
+#              tag vX.Y.Z, and push — which triggers the GitHub release
+#              workflow (.github/workflows/release.yml).
 # License: MIT
 # ==============================================================================
 
@@ -22,23 +23,25 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Bump a script's VERSION, update CHANGELOG.md, commit, tag, and push to
-trigger the GitHub release workflow.
+Bump the readonly VERSION of every script changed since the last v* release
+tag, update CHANGELOG.md, commit, tag, and push to trigger the GitHub
+release workflow.
 
 Options:
-  -s, --script <FILE>   Script whose readonly VERSION to bump (default: lxc-to-vm.sh)
   -t, --type <TYPE>     Bump type: patch | minor | major (default: patch)
   -v, --version <VER>   Set an explicit version X.Y.Z (overrides --type)
   -m, --notes <TEXT>    Release notes appended to the commit/tag message
+      --all             Bump every script with a VERSION constant, not just
+                        those changed since the last release tag
       --no-tag          Commit the bump but do not create a git tag
       --no-push         Commit/tag locally but do not push
   -n, --dry-run         Show what would be done without making changes
   -h, --help            Show this help message
 
 Examples:
-  $(basename "$0")                          # patch bump on lxc-to-vm.sh, tag + push
+  $(basename "$0")                          # patch bump on all changed scripts
   $(basename "$0") -t minor -m "New flags"  # minor bump with release notes
-  $(basename "$0") -s shrink-lxc.sh -v 6.0.7 --no-push
+  $(basename "$0") --all -v 6.2.0 --no-push
 EOF
     exit 0
 }
@@ -46,18 +49,17 @@ EOF
 # ------------------------------------------------------------------------------
 # Args
 # ------------------------------------------------------------------------------
-SCRIPT_FILE="lxc-to-vm.sh"
 BUMP_TYPE="patch"
 NEW_VERSION=""
 NOTES=""
-DO_TAG=true DO_PUSH=true DRY_RUN=false
+BUMP_ALL=false DO_TAG=true DO_PUSH=true DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -s|--script)  SCRIPT_FILE="$2";  shift 2 ;;
         -t|--type)    BUMP_TYPE="$2";    shift 2 ;;
         -v|--version) NEW_VERSION="$2";  shift 2 ;;
         -m|--notes)   NOTES="$2";        shift 2 ;;
+        --all)        BUMP_ALL=true;     shift ;;
         --no-tag)     DO_TAG=false;      shift ;;
         --no-push)    DO_PUSH=false;     shift ;;
         -n|--dry-run) DRY_RUN=true;      shift ;;
@@ -71,7 +73,6 @@ done
 # ------------------------------------------------------------------------------
 cd "$(dirname "$0")"
 
-[[ -f "$SCRIPT_FILE" ]] || die "Script not found: $SCRIPT_FILE"
 [[ -f "CHANGELOG.md" ]] || die "CHANGELOG.md not found (run from repo root)"
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
@@ -81,25 +82,49 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     die "Working tree has uncommitted changes. Commit or stash them first."
 fi
 
-CURRENT_VERSION="$(grep -m1 'readonly VERSION="' "$SCRIPT_FILE" | sed 's/.*readonly VERSION="\([^"]*\)".*/\1/')"
-[[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || die "Could not parse readonly VERSION in $SCRIPT_FILE (got: '$CURRENT_VERSION')"
-
-# Release tags are repo-wide, so the bump base is the higher of the script's
-# VERSION and the latest existing vX.Y.Z tag. This keeps a script that has
-# drifted behind the tag history (e.g. VERSION=6.0.6 while v6.0.8 is tagged)
-# from proposing a release tag that already exists.
+# Latest repo release tag (tags are repo-wide, so this is the release line).
 LATEST_TAG_VERSION="$(git tag -l 'v*' | sed 's/^v//' \
     | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+LAST_TAG=""
+[[ -n "$LATEST_TAG_VERSION" ]] && LAST_TAG="v${LATEST_TAG_VERSION}"
 
-BASE_VERSION="$CURRENT_VERSION"
-if [[ -n "$LATEST_TAG_VERSION" ]]; then
-    HIGHER="$(printf '%s\n%s\n' "$CURRENT_VERSION" "$LATEST_TAG_VERSION" | sort -V | tail -1)"
-    if [[ "$HIGHER" == "$LATEST_TAG_VERSION" && "$LATEST_TAG_VERSION" != "$CURRENT_VERSION" ]]; then
-        warn "Script VERSION ($CURRENT_VERSION) is behind latest tag v$LATEST_TAG_VERSION — syncing to the tag's release line."
-        BASE_VERSION="$LATEST_TAG_VERSION"
+# ------------------------------------------------------------------------------
+# Scripts to bump: files changed since the last release that carry a
+# readonly VERSION constant (or all such files with --all / first release).
+# ------------------------------------------------------------------------------
+mapfile -t CANDIDATE_FILES < <(
+    if $BUMP_ALL || [[ -z "$LAST_TAG" ]]; then
+        git ls-files
+    else
+        git diff --name-only "${LAST_TAG}..HEAD"
     fi
+)
+
+BUMP_FILES=()
+for f in "${CANDIDATE_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    if grep -q 'readonly VERSION="[0-9]\+\.[0-9]\+\.[0-9]\+"' "$f"; then
+        BUMP_FILES+=("$f")
+    fi
+done
+
+if [[ ${#BUMP_FILES[@]} -eq 0 ]]; then
+    if $BUMP_ALL || [[ -z "$LAST_TAG" ]]; then
+        die "No scripts with a readonly VERSION constant found."
+    fi
+    warn "No VERSION-bearing files changed since ${LAST_TAG}."
+    warn "Nothing to bump. Use --all to bump every script, or release anyway? Aborting."
+    exit 1
 fi
+
+# Bump base = highest of the latest tag and the VERSION of every script being
+# bumped, so a script ahead of the tag line is never downgraded by a release.
+BASE_VERSION="${LATEST_TAG_VERSION:-0.0.0}"
+declare -A OLD_VERSIONS=()
+for f in "${BUMP_FILES[@]}"; do
+    OLD_VERSIONS[$f]="$(grep -m1 'readonly VERSION="' "$f" | sed 's/.*readonly VERSION="\([^"]*\)".*/\1/')"
+    BASE_VERSION="$(printf '%s\n%s\n' "$BASE_VERSION" "${OLD_VERSIONS[$f]}" | sort -V | tail -1)"
+done
 
 # Compute new version
 if [[ -z "$NEW_VERSION" ]]; then
@@ -119,18 +144,26 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
     die "Tag ${TAG} already exists."
 fi
 
-log "Script:   $SCRIPT_FILE"
-log "Version:  $CURRENT_VERSION -> $NEW_VERSION (base: $BASE_VERSION)"
-log "Branch:   $BRANCH"
+log "Last tag: ${LAST_TAG:-none}"
+log "Bump:     $BUMP_TYPE  (base: $BASE_VERSION -> $NEW_VERSION)"
 log "Tag:      $TAG$($DO_TAG || printf ' (skipped)')"
 log "Push:     $DO_PUSH"
+log "Branch:   $BRANCH"
+log "Scripts:"
+for f in "${BUMP_FILES[@]}"; do
+    log "  $f  ${OLD_VERSIONS[$f]} -> $NEW_VERSION"
+done
 $DRY_RUN && { log "Dry run — no changes made."; exit 0; }
 
 # ------------------------------------------------------------------------------
 # Apply
 # ------------------------------------------------------------------------------
-sed -i "0,/readonly VERSION=\"${CURRENT_VERSION}\"/s//readonly VERSION=\"${NEW_VERSION}\"/" "$SCRIPT_FILE"
-bash -n "$SCRIPT_FILE" || die "Syntax check failed on $SCRIPT_FILE after version bump."
+for f in "${BUMP_FILES[@]}"; do
+    sed -i "s/readonly VERSION=\"[0-9]\+\.[0-9]\+\.[0-9]\+\"/readonly VERSION=\"${NEW_VERSION}\"/" "$f"
+    case "$f" in
+        *.sh|*.bash) bash -n "$f" || die "Syntax check failed on $f after version bump." ;;
+    esac
+done
 
 # Rotate CHANGELOG: promote [Unreleased] to the new version, keep a fresh
 # empty Unreleased section on top. If no Unreleased section exists, insert the
@@ -144,7 +177,7 @@ else
     warn "No versioned section found in CHANGELOG.md — update it manually."
 fi
 
-git add "$SCRIPT_FILE" CHANGELOG.md
+git add "${BUMP_FILES[@]}" CHANGELOG.md
 git commit -m "Release ${TAG}${NOTES:+ - ${NOTES}}"
 
 if $DO_TAG; then
