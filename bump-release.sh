@@ -151,6 +151,7 @@ fi
 log "Last tag: ${LAST_TAG:-none}"
 log "Bump:     $BUMP_TYPE  (base: $BASE_VERSION -> $NEW_VERSION)"
 log "Tag:      $TAG$($DO_TAG || printf ' (skipped)')"
+log "Notes:    ${NOTES:-none}"
 log "Push:     $DO_PUSH"
 log "Branch:   $BRANCH"
 log "Scripts:"
