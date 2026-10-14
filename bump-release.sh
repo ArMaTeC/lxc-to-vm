@@ -33,6 +33,7 @@ Options:
   -t, --type <TYPE>     Bump type: patch | minor | major (default: patch)
   -v, --version <VER>   Set an explicit version X.Y.Z (overrides --type)
   -m, --notes <TEXT>    Release notes appended to the commit/tag message
+                        (can also be set via the BUMP_NOTES env var)
       --all             Bump every script with a VERSION constant, not just
                         those changed since the last release tag
       --no-tag          Commit the bump but do not create a git tag
@@ -53,7 +54,7 @@ EOF
 # ------------------------------------------------------------------------------
 BUMP_TYPE="patch"
 NEW_VERSION=""
-NOTES=""
+NOTES="${BUMP_NOTES:-}"
 BUMP_ALL=false DO_TAG=true DO_PUSH=true DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
