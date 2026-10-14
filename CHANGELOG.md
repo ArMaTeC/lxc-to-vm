@@ -12,6 +12,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Extra package installation** (`lxc-to-vm.sh`, `-p`/`--pkg`/`--packages`)
+  - Install additional packages inside the guest during conversion
+  - Accepts comma- or space-separated lists and may be repeated
+  - Package manager is auto-detected inside the chroot, covering all supported
+    distro families (apt, dnf, yum, apk, pacman, zypper)
+  - Package names are validated before use; install failures warn without
+    aborting the conversion
+  - Shown in dry-run summary and saved in profiles
+
 ## [6.1.0] - 2026-05-28
 
 ### Added (Windows VM Disk Support)

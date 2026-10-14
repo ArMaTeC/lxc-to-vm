@@ -312,6 +312,8 @@ Options:
   -d, --disk-size <GB>   Disk size in GB (omit for predictive advisor)
   -f, --format <FMT>     Disk format: qcow2 (default) | raw | vmdk
   -b, --bridge <NAME>    Network bridge (default: vmbr0)
+  -p, --pkg <PKGS>       Extra packages to install in the converted guest
+                         (comma/space separated, repeatable; apt/dnf/yum/apk/pacman/zypper)
   -t, --temp-dir <PATH>  Working directory for temp image (default: /var/lib/vz/dump)
   -B, --bios <TYPE>      Firmware type: seabios (default) | ovmf (UEFI)
   -n, --dry-run          Show what would be done without making changes
@@ -365,6 +367,7 @@ Examples:
   $0 -c 100 -v 200 -s local-lvm --as-template --sysprep              # Create template
   $0 -c 100 -v 200 -s local-lvm --replace-vm                         # Replace existing VM
   $0 -c 100 -v 200 -s local-lvm --shrink                # Auto-shrink + convert
+  $0 -c 100 -v 200 -s local-lvm -d 32 -p "curl htop"    # Install extra packages
 USAGE
     exit 0
 }
@@ -863,6 +866,7 @@ BIOS_TYPE="${BIOS_TYPE:-seabios}"
 KEEP_NETWORK="${KEEP_NETWORK:-false}"
 SHRINK_FIRST="${SHRINK_FIRST:-false}"
 AUTO_START="${AUTO_START:-false}"
+PKG_ADDONS="${PKG_ADDONS:-}"
 PROFILE_EOF
 
     ok "Profile '${name}' saved to $profile_file"
@@ -1267,6 +1271,7 @@ EXPORT_DEST="" AS_TEMPLATE=false SYSPREP=false
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
 AUTO_FIX=true SKIP_CHECKS=false
 CLEANUP_EXISTING_VM=false
+PKG_ADDONS="" PKG_ADDON_LIST=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1276,6 +1281,7 @@ while [[ $# -gt 0 ]]; do
         -d|--disk-size)  DISK_SIZE="$2";   shift 2 ;;
         -f|--format)     DISK_FORMAT="$2";  shift 2 ;;
         -b|--bridge)     BRIDGE="$2";      shift 2 ;;
+        -p|--pkg|--packages) PKG_ADDONS+=" ${2//,/ }"; shift 2 ;;
         -t|--temp-dir)   WORK_DIR="$2";    shift 2 ;;
         -B|--bios)       BIOS_TYPE="$2";   shift 2 ;;
         -n|--dry-run)    DRY_RUN=true;      shift ;;
@@ -1318,6 +1324,17 @@ done
 # Handle profile loading first (before single conversion logic)
 if [[ -n "$PROFILE_NAME" ]]; then
     load_profile "$PROFILE_NAME"
+fi
+
+# Validate extra package names — values are interpolated into a generated
+# script that runs as root inside the chroot, so keep a conservative charset.
+if [[ -n "${PKG_ADDONS// /}" ]]; then
+    for pkg_name in $PKG_ADDONS; do
+        [[ "$pkg_name" =~ ^[A-Za-z0-9][A-Za-z0-9._:+~=/%-]*$ ]] \
+            || die "Invalid package name for --pkg: '$pkg_name'"
+        PKG_ADDON_LIST+=" $pkg_name"
+    done
+    PKG_ADDON_LIST="${PKG_ADDON_LIST# }"
 fi
 
 # Handle validate-only mode first
@@ -2139,6 +2156,7 @@ if $DRY_RUN; then
     e "  ${BOLD}Firmware:${NC}    $BIOS_TYPE"
     e "  ${BOLD}Bridge:${NC}      $BRIDGE"
     e "  ${BOLD}Keep net:${NC}    $KEEP_NETWORK"
+    e "  ${BOLD}Extra pkgs:${NC}  ${PKG_ADDON_LIST:-none}"
     e "  ${BOLD}Auto-start:${NC}  $AUTO_START"
     e "  ${BOLD}Snapshot:${NC}    $CREATE_SNAPSHOT"
     e "  ${BOLD}Rollback:${NC}    $ROLLBACK_ON_FAILURE"
@@ -2342,7 +2360,7 @@ TEMP_DIR="${WORK_BASE}/lxc-to-vm-${CTID}"
 IMAGE_FILE="${TEMP_DIR}/disk.raw"
 MOUNT_POINT="${TEMP_DIR}/mnt"
 
-log "Source CTID=$CTID  Target VMID=$VMID  Storage=$STORAGE  Disk=${DISK_SIZE}GB  Format=$DISK_FORMAT  Bridge=$BRIDGE"
+log "Source CTID=$CTID  Target VMID=$VMID  Storage=$STORAGE  Disk=${DISK_SIZE}GB  Format=$DISK_FORMAT  Bridge=$BRIDGE  ExtraPkgs=${PKG_ADDON_LIST:-none}"
 log "Working directory: $TEMP_DIR"
 
 # Create Workspace
@@ -2966,6 +2984,40 @@ elif [ -f /etc/inittab ]; then
     grep -q ttyS0 /etc/inittab || echo "ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100" >> /etc/inittab
 fi
 SERIAL_BLOCK
+
+# --- Extra packages requested via -p/--pkg ---
+# One generic block for every distro family: the package manager is detected
+# inside the chroot rather than trusting DISTRO_FAMILY, which also covers the
+# unknown-distro fallback and future families. Runs after the boot-critical
+# steps and is non-fatal, so a bad package name cannot abort the conversion.
+if [[ -n "$PKG_ADDON_LIST" ]]; then
+    log "Additional packages will be installed in chroot: $PKG_ADDON_LIST"
+    cat >> "$CHROOT_SCRIPT" <<PKG_ADDON_BLOCK
+
+# --- Extra packages requested via -p/--pkg ---
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get install -y ${PKG_ADDON_LIST} \
+        || echo "WARNING: failed to install extra packages: ${PKG_ADDON_LIST}" >&2
+elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y ${PKG_ADDON_LIST} \
+        || echo "WARNING: failed to install extra packages: ${PKG_ADDON_LIST}" >&2
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y ${PKG_ADDON_LIST} \
+        || echo "WARNING: failed to install extra packages: ${PKG_ADDON_LIST}" >&2
+elif command -v apk >/dev/null 2>&1; then
+    apk add ${PKG_ADDON_LIST} \
+        || echo "WARNING: failed to install extra packages: ${PKG_ADDON_LIST}" >&2
+elif command -v pacman >/dev/null 2>&1; then
+    pacman -S --needed --noconfirm ${PKG_ADDON_LIST} \
+        || echo "WARNING: failed to install extra packages: ${PKG_ADDON_LIST}" >&2
+elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install ${PKG_ADDON_LIST} \
+        || echo "WARNING: failed to install extra packages: ${PKG_ADDON_LIST}" >&2
+else
+    echo "WARNING: no supported package manager in guest; skipping extra packages: ${PKG_ADDON_LIST}" >&2
+fi
+PKG_ADDON_BLOCK
+fi
 
 log "Entering chroot to install kernel and GRUB ($DISTRO_FAMILY / $BIOS_TYPE)..."
 chmod +x "$CHROOT_SCRIPT"
