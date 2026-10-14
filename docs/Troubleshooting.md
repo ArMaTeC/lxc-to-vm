@@ -212,6 +212,34 @@ qm guest exec 200 -- /bin/hostname
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --resume
 ```
 
+### Extra Packages Not Installed
+
+**Symptoms:** Packages passed via `-p`/`--pkg`/`--packages` are missing from the
+converted VM, or the log shows `WARNING: failed to install extra packages`.
+
+**Diagnosis:**
+
+```bash
+# Package installs run inside the chroot and are non-fatal — check the log
+grep -i "extra packages" /var/log/lxc-to-vm.log
+```
+
+**Solutions:**
+
+1. **Verify package names:** names must match the allowed charset
+   (`A-Za-z0-9` plus `._:+~=/%-`); an invalid name aborts with
+   `Invalid package name for --pkg` before conversion starts.
+1. **Check the guest distro:** the installer auto-detects `apt-get`, `dnf`,
+   `yum`, `apk`, `pacman`, or `zypper` inside the guest. If none is found, the
+   package step is skipped with a warning — install manually after boot.
+1. **Check package availability:** a misspelled or distro-mismatched package
+   fails at install time (warning only). Verify the name against the guest's
+   repositories, then install manually, e.g.:
+
+```bash
+qm guest exec 200 -- apt-get install -y htop
+```
+
 ---
 
 ## vm-to-lxc.sh Issues

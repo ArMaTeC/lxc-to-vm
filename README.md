@@ -90,7 +90,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --start
 # Shrink + Convert
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 
-# Convert and install extra packages in the guest (works with apt/dnf/yum/apk/pacman)
+# Convert and install extra packages in the guest (works with apt/dnf/yum/apk/pacman/zypper)
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 -p "curl htop" --start
 ```
 
@@ -269,7 +269,7 @@ lxc-to-vm/
 
 | Script | Purpose | Key Flags |
 | ------ | ------- | --------- |
-| `lxc-to-vm.sh` | LXC → VM conversion | `-c` (CT ID), `-v` (VM ID), `-s` (storage), `--start`, `--shrink` |
+| `lxc-to-vm.sh` | LXC → VM conversion | `-c` (CT ID), `-v` (VM ID), `-s` (storage), `-p` (extra pkgs), `--start`, `--shrink` |
 | `vm-to-lxc.sh` | VM → LXC conversion | `-v` (VM ID), `-c` (CT ID), `-s` (storage), `--start`, `--snapshot` |
 | `shrink-lxc.sh` | Shrink LXC disk | `-c` (CT ID), `--dry-run` |
 | `expand-lxc.sh` | Expand LXC disk | `-c` (CT ID), `-s` (size), `-a` (add), `--max`, `--no-restart` |

@@ -37,6 +37,7 @@ This project provides bidirectional conversion between Proxmox VE LXC containers
 - **Disk Clone & Replace**: Clone disks across storage backends
 - **Snapshot Safety**: Automatic snapshots with rollback capability
 - **Batch Processing**: Convert multiple workloads at once
+- **Extra Package Installation**: Install additional packages in the guest during conversion (`-p`/`--pkg`)
 - **Hook System**: Extensible automation via custom scripts
 - **Network Preservation**: Maintain or reconfigure network settings
 - **API Integration**: Proxmox VE API support for cluster operations

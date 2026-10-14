@@ -35,6 +35,7 @@ Comprehensive documentation for converting Proxmox LXC containers to KVM virtual
 - **Batch Processing** - Convert multiple containers at once
 - **Snapshot Safety** - Automatic rollback on failure
 - **Predictive Sizing** - AI-like disk size recommendations
+- **Extra Package Installation** - Install additional packages inside the guest during conversion
 - **Cloud Export** - Export to S3, NFS, or remote storage
 
 ---
@@ -76,7 +77,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 | `-s` | `--storage` | Proxmox storage name | Prompted |
 | `-d` | `--disk-size` | Disk size in GB (e.g., 10G) | Auto-calculated |
 | `-b` | `--bridge` | Network bridge | `vmbr0` |
-| `-p` | `--pkg` | Extra packages to install in the guest (comma/space separated, repeatable) | — |
+| `-p` | `--pkg`, `--packages` | Extra packages to install in the guest (comma/space separated, repeatable) | — |
 | `-t` | `--temp-dir` | Working directory | `/var/lib/vz/dump` |
 | `-n` | `--dry-run` | Preview without changes | — |
 | `-S` | `--start` | Auto-start after conversion | — |
@@ -197,6 +198,19 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
 sudo ./lxc-to-vm.sh -c 100 -v 9000 -s local-lvm --template
 ```
 
+### Install Extra Packages
+
+```bash
+# Space-separated list
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 -p "curl htop"
+
+# Comma-separated, and the flag can be repeated
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 \
+  -p "curl,htop" -p "qemu-guest-agent"
+```
+
+The guest's package manager is auto-detected inside the chroot (`apt-get`, `dnf`, `yum`, `apk`, `pacman`, `zypper`), so the flag works across all supported distro families. Package names are validated up front — an invalid name aborts with `Invalid package name for --pkg` before conversion starts. Installs run inside the chroot after the boot-critical steps; a failed package logs a warning without aborting the conversion, and if no supported package manager is found the step is skipped with a warning. The package list appears in the `--dry-run` summary and is preserved by `--save-profile`.
+
 ### Wizard Mode
 
 ```bash
@@ -291,6 +305,7 @@ sudo ./lxc-to-vm.sh --wizard
    - Install kernel and bootloader
    - Configure GRUB2 (Debian/Ubuntu/RHEL) or Syslinux (Alpine)
    - Setup EFI partition (UEFI mode)
+   - Install extra packages requested via `-p`/`--pkg` (package manager auto-detected, non-fatal)
 
 7. **Network Configuration**
    - Detect container network settings
