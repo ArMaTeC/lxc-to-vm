@@ -53,6 +53,18 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
   --snapshot --rollback-on-failure --start
 ```
 
+### Example 5: Convert with Extra Packages
+
+```bash
+# Install additional packages inside the guest during conversion
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 \
+  -p "curl htop qemu-guest-agent" --start
+```
+
+`-p`/`--pkg`/`--packages` accepts comma- or space-separated names and may be
+repeated. The guest's package manager is auto-detected (`apt`, `dnf`, `yum`,
+`apk`, `pacman`, `zypper`), so the same flag works across distro families.
+
 ---
 
 ## Production Workflows

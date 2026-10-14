@@ -327,6 +327,21 @@ else
 fi
 ```
 
+### Provision Packages During Conversion
+
+Install required tooling inside the guest as part of the conversion so the VM
+boots with dependencies already present:
+
+```bash
+# Bake monitoring and agent tooling into the converted VM
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 \
+    -p "qemu-guest-agent,curl,htop" --start
+
+# The package list is also preserved when saving a profile
+sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm \
+    -p "qemu-guest-agent" --save-profile monitored-vm
+```
+
 ### Shrink + Convert Pipeline
 
 Automate the shrink-before-convert workflow:

@@ -122,6 +122,9 @@ Sync filesystem into disk image (rsync)
 Install bootloader / kernel / initramfs per detected distro
       │
       ▼
+Install extra packages requested via -p/--pkg (package manager auto-detected)
+      │
+      ▼
 Configure network adapter (ens18), bootloader, fstab
       │
       ▼
