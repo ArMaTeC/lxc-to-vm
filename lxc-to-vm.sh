@@ -625,7 +625,7 @@ migrate_container_to_local() {
 # Hooks are stored in /var/lib/lxc-to-vm/hooks/ and named by stage
 
 # Directory where hook scripts are stored
-HOOKS_DIR="/var/lib/lxc-to-vm/hooks"
+HOOKS_DIR="${LXC_TO_VM_HOOK_DIR:-/var/lib/lxc-to-vm/hooks}"
 
 ### Function: run_hook
 # Execute a user-supplied hook script for a given conversion stage.
