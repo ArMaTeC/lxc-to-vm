@@ -1245,7 +1245,10 @@ run_single_conversion() {
 
         if $DESTROY_SOURCE; then
             # Run pre-destroy hook
-            run_hook "pre-destroy" "$CTID" "$VMID"
+            if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
+                warn "Pre-destroy hook failed; source container was not destroyed."
+                return 1
+            fi
 
             log "Destroying original container $CTID..."
             pct destroy "$CTID" >> "$LOG_FILE" 2>&1 && ok "Source container $CTID destroyed." || warn "Failed to destroy container $CTID"
@@ -2140,7 +2143,7 @@ if $SHRINK_FIRST && ! $DRY_RUN; then
     fi
 
     # Run post-shrink hook
-    run_hook "post-shrink" "$CTID" "$VMID"
+    run_hook "post-shrink" "$CTID" "$VMID" || true
 fi
 
 # If --shrink used in dry-run, show what would happen
@@ -2360,8 +2363,13 @@ do_conversion() {
     verbose "Starting main conversion workflow for CT $CTID → VM $VMID"
     verbose "Configuration: storage=$STORAGE, disk=${DISK_SIZE}GB, format=$DISK_FORMAT, bios=$BIOS_TYPE"
 
-    # Run pre-convert hook
-    run_hook "pre-convert" "$CTID" "$VMID"
+    if $DRY_RUN; then
+        # Run pre-convert hook
+        if ! run_hook "pre-convert" "$CTID" "$VMID"; then
+            warn "Pre-convert hook failed; source container was not converted."
+            return 1
+        fi
+    fi
 
 # Determine the working base directory
 WORK_BASE="${WORK_DIR:-$DEFAULT_WORK_BASE}"
