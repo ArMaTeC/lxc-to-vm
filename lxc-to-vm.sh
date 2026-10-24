@@ -1240,16 +1240,18 @@ run_single_conversion() {
 
     # Run the main conversion (trap will handle cleanup)
     if do_conversion; then
-        # Success - remove snapshot and optionally destroy source
-        remove_snapshot "$CTID"
-
         if $DESTROY_SOURCE; then
             # Run pre-destroy hook
             if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
                 warn "Pre-destroy hook failed; source container was not destroyed."
                 return 1
             fi
+        fi
 
+        # Success - remove snapshot and optionally destroy source
+        remove_snapshot "$CTID"
+
+        if $DESTROY_SOURCE; then
             log "Destroying original container $CTID..."
             pct destroy "$CTID" >> "$LOG_FILE" 2>&1 && ok "Source container $CTID destroyed." || warn "Failed to destroy container $CTID"
         fi
@@ -2366,7 +2368,7 @@ do_conversion() {
     verbose "Starting main conversion workflow for CT $CTID → VM $VMID"
     verbose "Configuration: storage=$STORAGE, disk=${DISK_SIZE}GB, format=$DISK_FORMAT, bios=$BIOS_TYPE"
 
-    if $DRY_RUN; then
+    if ! $DRY_RUN; then
         # Run pre-convert hook
         if ! run_hook "pre-convert" "$CTID" "$VMID"; then
             warn "Pre-convert hook failed; source container was not converted."
@@ -3621,7 +3623,10 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
 
         if $DESTROY_SOURCE; then
             # Run pre-destroy hook
-            run_hook "pre-destroy" "$CTID" "$VMID"
+            if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
+                warn "Pre-destroy hook failed; source container was not destroyed."
+                return 1
+            fi
 
             log "Destroying original container $CTID..."
             pct destroy "$CTID" >> "$LOG_FILE" 2>&1 && ok "Source container $CTID destroyed." || warn "Failed to destroy container $CTID"
