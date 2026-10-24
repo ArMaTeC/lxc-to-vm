@@ -1972,7 +1972,10 @@ if $SHRINK_FIRST && ! $DRY_RUN; then
     log "=== PRE-CONVERSION DISK SHRINK ==="
 
     # Run pre-shrink hook
-    run_hook "pre-shrink" "$CTID" "$VMID"
+    if ! run_hook "pre-shrink" "$CTID" "$VMID"; then
+        warn "Pre-shrink hook failed; source container was not shrinked."
+        return 1
+    fi
 
     # Parse rootfs from container config
     SHRINK_ROOTFS_LINE=$(pct config "$CTID" | grep "^rootfs:")
