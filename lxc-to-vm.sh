@@ -3625,7 +3625,7 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
             # Run pre-destroy hook
             if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
                 warn "Pre-destroy hook failed; source container was not destroyed."
-                return 1
+                exit 1
             fi
 
             log "Destroying original container $CTID..."
