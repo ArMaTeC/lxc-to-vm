@@ -76,8 +76,8 @@ export VM_TO_LXC_HOOK_DIR=/custom/hooks/path
 
 | Stage | When | Arguments |
 | ----- | ---- | ----------- |
-| `pre-shrink` | Before shrinking container | `CTID` |
-| `post-shrink` | After successful shrink | `CTID` |
+| `pre-shrink` | Before shrinking container | `CTID` `VMID` |
+| `post-shrink` | After successful shrink | `CTID` `VMID` |
 | `pre-convert` | Before conversion starts | `CTID` `VMID` |
 | `post-convert` | After VM created successfully | `CTID` `VMID` |
 | `pre-destroy` | Before destroying container | `CTID` `VMID` |
