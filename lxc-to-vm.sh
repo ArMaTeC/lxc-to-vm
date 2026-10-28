@@ -625,7 +625,7 @@ migrate_container_to_local() {
 # Hooks are stored in /var/lib/lxc-to-vm/hooks/ and named by stage
 
 # Directory where hook scripts are stored
-HOOKS_DIR="/var/lib/lxc-to-vm/hooks"
+HOOKS_DIR="${LXC_TO_VM_HOOK_DIR:-/var/lib/lxc-to-vm/hooks}"
 
 ### Function: run_hook
 # Execute a user-supplied hook script for a given conversion stage.
@@ -1240,6 +1240,14 @@ run_single_conversion() {
 
     # Run the main conversion (trap will handle cleanup)
     if do_conversion; then
+        if $DESTROY_SOURCE; then
+            # Run pre-destroy hook
+            if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
+                warn "Pre-destroy hook failed; source container was not destroyed."
+                return 1
+            fi
+        fi
+
         # Success - remove snapshot and optionally destroy source
         remove_snapshot "$CTID"
 
@@ -1965,6 +1973,12 @@ fi
 if $SHRINK_FIRST && ! $DRY_RUN; then
     log "=== PRE-CONVERSION DISK SHRINK ==="
 
+    # Run pre-shrink hook
+    if ! run_hook "pre-shrink" "$CTID" "$VMID"; then
+        warn "Pre-shrink hook failed; source container was not shrinked."
+        return 1
+    fi
+
     # Parse rootfs from container config
     SHRINK_ROOTFS_LINE=$(pct config "$CTID" | grep "^rootfs:")
     [[ -n "$SHRINK_ROOTFS_LINE" ]] || die "Could not find rootfs config for container $CTID."
@@ -2132,6 +2146,9 @@ if $SHRINK_FIRST && ! $DRY_RUN; then
         DISK_SIZE=$(( SHRINK_TARGET_GB + 3 ))
         ok "Auto-setting VM disk size to ${DISK_SIZE}GB (container: ${SHRINK_TARGET_GB}GB + 3GB partition/ext4 overhead)"
     fi
+
+    # Run post-shrink hook
+    run_hook "post-shrink" "$CTID" "$VMID" || true
 fi
 
 # If --shrink used in dry-run, show what would happen
@@ -2350,6 +2367,14 @@ do_conversion() {
     
     verbose "Starting main conversion workflow for CT $CTID → VM $VMID"
     verbose "Configuration: storage=$STORAGE, disk=${DISK_SIZE}GB, format=$DISK_FORMAT, bios=$BIOS_TYPE"
+
+    if ! $DRY_RUN; then
+        # Run pre-convert hook
+        if ! run_hook "pre-convert" "$CTID" "$VMID"; then
+            warn "Pre-convert hook failed; source container was not converted."
+            return 1
+        fi
+    fi
 
 # Determine the working base directory
 WORK_BASE="${WORK_DIR:-$DEFAULT_WORK_BASE}"
@@ -3202,6 +3227,9 @@ qm set "$VMID" --scsi0 "$IMPORTED_DISK"
 qm set "$VMID" --boot order=scsi0
 qm resize "$VMID" scsi0 "${DISK_SIZE}G" 2>/dev/null || true
 
+# Run post-convert hook
+run_hook "post-convert" "$CTID" "$VMID"
+
 # ==============================================================================
 # 7. POST-CONVERSION VALIDATION
 # ==============================================================================
@@ -3505,6 +3533,9 @@ if $AUTO_START; then
 fi
 
 if (( VM_HEALTH_ERRORS > 0 )); then
+    # Run health-check-failed hook
+    run_hook "health-check-failed" "$CTID" "$VMID"
+
     collect_vm_diagnostics
     warn "Post-conversion VM health checks had ${VM_HEALTH_ERRORS} issue(s). Review $LOG_FILE for host/guest diagnostics."
     warn "The VM was created and started successfully. Guest agent may need more time to initialize."
@@ -3591,6 +3622,12 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
         fi
 
         if $DESTROY_SOURCE; then
+            # Run pre-destroy hook
+            if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
+                warn "Pre-destroy hook failed; source container was not destroyed."
+                return 1
+            fi
+
             log "Destroying original container $CTID..."
             pct destroy "$CTID" >> "$LOG_FILE" 2>&1 && ok "Source container $CTID destroyed." || warn "Failed to destroy container $CTID"
         fi

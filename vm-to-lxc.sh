@@ -323,7 +323,7 @@ migrate_vm_to_local() {
 # PLUGIN / HOOK SYSTEM
 # ==============================================================================
 
-HOOKS_DIR="/var/lib/vm-to-lxc/hooks"
+HOOKS_DIR="${VM_TO_LXC_HOOK_DIR:-/var/lib/vm-to-lxc/hooks}"
 
 ### Function: run_hook
 # Execute a user-supplied hook script for a given conversion stage.
