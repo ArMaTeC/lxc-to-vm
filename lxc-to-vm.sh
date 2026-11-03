@@ -655,7 +655,7 @@ run_hook() {
         export HOOK_STAGE="$hook_name"
         
         if ! "$hook_script" "$ctid" "$vmid" >> "$LOG_FILE" 2>&1; then
-            warn "Hook $hook_name exited with error (non-fatal)"
+            warn "Hook $hook_name exited with error"
             return 1
         fi
         return 0
@@ -3608,6 +3608,14 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
 
     # Run the conversion
     if do_conversion; then
+        # Run pre-destroy hook before removing the safety snapshot
+        if $DESTROY_SOURCE; then
+            if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
+                warn "Pre-destroy hook failed; source container was not destroyed."
+                exit 1
+            fi
+        fi
+
         # Success - remove snapshot and optionally destroy source
         remove_snapshot "$CTID"
 
@@ -3622,12 +3630,6 @@ if [[ -n "$CTID" && -n "$VMID" ]]; then
         fi
 
         if $DESTROY_SOURCE; then
-            # Run pre-destroy hook
-            if ! run_hook "pre-destroy" "$CTID" "$VMID"; then
-                warn "Pre-destroy hook failed; source container was not destroyed."
-                return 1
-            fi
-
             log "Destroying original container $CTID..."
             pct destroy "$CTID" >> "$LOG_FILE" 2>&1 && ok "Source container $CTID destroyed." || warn "Failed to destroy container $CTID"
         fi
