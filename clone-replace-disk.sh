@@ -515,7 +515,10 @@ if [[ "$TYPE" == "vm" && "$OS_TYPE" == "windows" ]]; then
                 TARGET_DEVICE="/dev/${VG_NAME}/${TARGET_VOLUME}"
                 ;;
             zfspool)
-                ZFS_POOL=$(pvesm path "$TARGET_REF" 2>/dev/null | sed 's|/dev/zd0||' | cut -d'/' -f1)
+                # pvesm path returns /dev/zvol/<dataset>/<vol> — the target
+                # dataset is the parent of the volume name.
+                ZFS_POOL=$(pvesm path "$TARGET_REF" 2>/dev/null | sed 's|^/dev/zvol/||')
+                ZFS_POOL="${ZFS_POOL%/*}"
                 [[ -n "$ZFS_POOL" ]] || die "Could not determine ZFS pool"
                 zfs create -V "${TARGET_SIZE}G" "${ZFS_POOL}/${TARGET_VOLUME}" >> "$LOG_FILE" 2>&1 || die "Failed to create ZFS volume"
                 TARGET_DEVICE="/dev/zvol/${ZFS_POOL}/${TARGET_VOLUME}"
@@ -580,7 +583,10 @@ case "$TARGET_STORAGE_TYPE" in
     
     zfspool)
         log "Creating ZFS volume..."
-        ZFS_POOL=$(pvesm path "$TARGET_REF" 2>/dev/null | sed 's|/dev/zvol/||' | cut -d'/' -f1)
+        # pvesm path returns /dev/zvol/<dataset>/<vol> — the target
+        # dataset is the parent of the volume name.
+        ZFS_POOL=$(pvesm path "$TARGET_REF" 2>/dev/null | sed 's|^/dev/zvol/||')
+        ZFS_POOL="${ZFS_POOL%/*}"
         [[ -n "$ZFS_POOL" ]] || die "Could not determine ZFS pool"
         
         ZFS_PATH="${ZFS_POOL}/${TARGET_VOLUME}"

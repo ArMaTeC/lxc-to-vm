@@ -175,21 +175,12 @@ check_target_space() {
             free_mb=$(vgs --noheadings --units m -o vg_free "$vg_name" 2>/dev/null | awk '{print $1}' | sed 's/m//i' | cut -d'.' -f1)
             free_gb=$((free_mb / 1024))
             ;;
-        zfspool)
-            local zfs_dataset
-            [[ -n "$first_volid" ]] && zfs_dataset=$(pvesm path "$first_volid" 2>/dev/null | sed 's|/dev/zd0||')
-            [[ -n "$zfs_dataset" ]] || die "Could not determine ZFS dataset for '$storage'"
-            local avail_gb
-            avail_gb=$(zfs list -H -o available "$zfs_dataset" 2>/dev/null | awk '{print $1}' | sed 's/G//i')
-            free_gb=${avail_gb%.*}
-            ;;
-        dir|nfs|cifs|glusterfs)
-            local storage_path
-            [[ -n "$first_volid" ]] && storage_path=$(pvesm path "$first_volid" 2>/dev/null | xargs dirname)
-            [[ -z "$storage_path" || ! -d "$storage_path" ]] && storage_path=$(pvesm status 2>/dev/null | awk -v s="$storage" 'NR>1 && $1==s{print $7; exit}')
-            [[ -n "$storage_path" && -d "$storage_path" ]] || die "Could not resolve path for '$storage'"
+        zfspool|dir|nfs|cifs|glusterfs)
+            # pvesm reports Available (KiB) directly for these storage types;
+            # no existing volume on the storage is required.
             local free_kb
-            free_kb=$(df -k "$storage_path" 2>/dev/null | awk 'NR==2{print $4}')
+            free_kb=$(pvesm status --storage "$storage" 2>/dev/null | awk 'NR==2{print $6}')
+            [[ "$free_kb" =~ ^[0-9]+$ ]] || die "Could not determine free space for '$storage'"
             free_gb=$((free_kb / 1024 / 1024))
             ;;
         *)
