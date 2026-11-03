@@ -11,7 +11,7 @@
 # -E propagates ERR trap into functions/subshells
 set -Eeuo pipefail
 
-readonly VERSION="6.2.0"
+readonly VERSION="6.2.1"
 readonly LOG_FILE="/var/log/expand-lxc.log"
 
 # ==============================================================================
