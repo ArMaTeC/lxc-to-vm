@@ -392,13 +392,9 @@ get_pool_free_space() {
             fi
             ;;
         zfspool)
-            local zfs_dataset
-            zfs_dataset=$(pvesm path "$ROOTFS_VOL" 2>/dev/null | sed 's|/dev/zd0||')
-            if [[ -n "$zfs_dataset" ]]; then
-                local avail_gb
-                avail_gb=$(zfs list -H -o available "$zfs_dataset" 2>/dev/null | awk '{print $1}' | sed 's/G//i')
-                free_gb=${avail_gb%.*}
-            fi
+            local free_kb
+            free_kb=$(pvesm status --storage "$STORAGE_NAME" 2>/dev/null | awk 'NR==2{print $6}')
+            [[ "$free_kb" =~ ^[0-9]+$ ]] && free_gb=$((free_kb / 1024 / 1024))
             ;;
         dir|nfs|cifs|glusterfs)
             local storage_path
@@ -428,13 +424,9 @@ get_pool_total_size() {
             fi
             ;;
         zfspool)
-            local zfs_dataset
-            zfs_dataset=$(pvesm path "$ROOTFS_VOL" 2>/dev/null | sed 's|/dev/zd0||')
-            if [[ -n "$zfs_dataset" ]]; then
-                local total_gb_raw
-                total_gb_raw=$(zfs list -H -o used,available "$zfs_dataset" 2>/dev/null | awk '{sum=$1+$2; print sum}' | sed 's/G//i')
-                total_gb=${total_gb_raw%.*}
-            fi
+            local total_kb
+            total_kb=$(pvesm status --storage "$STORAGE_NAME" 2>/dev/null | awk 'NR==2{print $4}')
+            [[ "$total_kb" =~ ^[0-9]+$ ]] && total_gb=$((total_kb / 1024 / 1024))
             ;;
     esac
     
