@@ -341,7 +341,7 @@ run_hook() {
     if [[ -x "$hook_script" ]]; then
         log "Running hook: $hook_name"
         export HOOK_VMID="$vmid" HOOK_CTID="$ctid" HOOK_LOG_FILE="$LOG_FILE" HOOK_STAGE="$hook_name"
-        "$hook_script" "$vmid" "$ctid" >> "$LOG_FILE" 2>&1 || { warn "Hook $hook_name exited with error (non-fatal)"; return 1; }
+        "$hook_script" "$vmid" "$ctid" >> "$LOG_FILE" 2>&1 || { warn "Hook $hook_name exited with error"; return 1; }
     fi
     return 0
 }
@@ -617,9 +617,15 @@ run_single_conversion() {
     fi
     $CREATE_SNAPSHOT && create_snapshot "$VMID"
     if do_conversion; then
+        if $DESTROY_SOURCE; then
+            # Run pre-destroy hook
+            if ! run_hook "pre-destroy" "$VMID" "$CTID"; then
+                warn "Pre-destroy hook failed; source VM was not destroyed."
+                return 1
+            fi
+        fi
         remove_snapshot "$VMID"
         if $DESTROY_SOURCE; then
-            run_hook "pre-destroy" "$VMID" "$CTID"
             log "Destroying original VM $VMID..."
             qm stop "$VMID" >> "$LOG_FILE" 2>&1 || true; sleep 2
             qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >> "$LOG_FILE" 2>&1 \
@@ -886,7 +892,12 @@ do_conversion() {
     verbose "Starting conversion: VM $VMID → CT $CTID"
 
     # Run pre-convert hook
-    run_hook "pre-convert" "$VMID" "$CTID"
+    if ! $DRY_RUN; then
+        if ! run_hook "pre-convert" "$VMID" "$CTID"; then
+            warn "Pre-convert hook failed; source VM was not converted."
+            return 1
+        fi
+    fi
 
     # --- Locate VM disk ---
     log "Locating VM $VMID disk..."
@@ -1260,9 +1271,15 @@ if [[ -n "$VMID" && -n "$CTID" ]]; then
     fi
     $CREATE_SNAPSHOT && create_snapshot "$VMID"
     if do_conversion; then
+        if $DESTROY_SOURCE; then
+            # Run pre-destroy hook
+            if ! run_hook "pre-destroy" "$VMID" "$CTID"; then
+                warn "Pre-destroy hook failed; source VM was not destroyed."
+                exit 1
+            fi
+        fi
         remove_snapshot "$VMID"
         if $DESTROY_SOURCE; then
-            run_hook "pre-destroy" "$VMID" "$CTID"
             log "Destroying original VM $VMID..."
             qm stop "$VMID" >> "$LOG_FILE" 2>&1 || true; sleep 2
             qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >> "$LOG_FILE" 2>&1 \
