@@ -24,7 +24,8 @@ VM with `lxc-to-vm.sh`.
 # OPTIONS
 
 **-c, --ctid** *ID*
-: Container ID to shrink.
+: Container ID(s) to shrink. Repeat the flag or give a comma/space-separated
+  list (e.g., `-c 100,101,102`). Bare numeric arguments are also accepted.
 
 **-g, --headroom** *GB*
 : Extra headroom above used space in GiB (default: 1).
@@ -32,11 +33,21 @@ VM with `lxc-to-vm.sh`.
 **-n, --dry-run**
 : Show what would be done without making changes.
 
+**-y, --yes**
+: Non-interactive mode: auto-accept confirmations. Issues requiring
+  attention are still reported and abort that container; in batch mode
+  processing continues with the next ID.
+
 **-h, --help**
 : Show help and exit.
 
 **-V, --version**
 : Show version and exit.
+
+# EXIT STATUS
+
+`0` on success; `1` invalid arguments; `2` not found; `5` shrink failed
+(also returned in batch mode when any container failed); `10` aborted by user.
 
 # STORAGE SUPPORT
 
@@ -61,6 +72,7 @@ VM with `lxc-to-vm.sh`.
 sudo ./shrink-lxc.sh -c 100
 sudo ./shrink-lxc.sh -c 100 -g 2
 sudo ./shrink-lxc.sh -c 100 --dry-run
+sudo ./shrink-lxc.sh -c 100,101,102 -y
 ```
 
 # SEE ALSO

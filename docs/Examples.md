@@ -40,8 +40,8 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --start
 ### Example 3: Shrink Before Convert
 
 ```bash
-# Optimize container then convert
-sudo ./shrink-lxc.sh -c 100 --resize
+# Shrink container then convert
+sudo ./shrink-lxc.sh -c 100
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --start
 ```
 
@@ -82,7 +82,7 @@ PROD_VMID=500
 STORAGE="prodmox-storage"
 
 # 1. Shrink dev container
-sudo ./shrink-lxc.sh -c $DEV_CTID --resize
+sudo ./shrink-lxc.sh -c $DEV_CTID -y
 
 # 2. Convert with UEFI for production
 sudo ./lxc-to-vm.sh -c $DEV_CTID -v $PROD_VMID -s $STORAGE \

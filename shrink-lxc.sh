@@ -71,6 +71,7 @@ readonly E_NOT_FOUND=2         # Container or resource not found
 readonly E_DISK_FULL=3         # Disk space issues
 readonly E_PERMISSION=4        # Permission denied
 readonly E_SHRINK_FAILED=5     # Shrink operation itself failed
+readonly E_ABORT=10            # Aborted by user at confirmation prompt
 
 HEADROOM_GB=$DEFAULT_HEADROOM_GB  # User-configurable via -g flag
 
@@ -237,19 +238,25 @@ ${BOLD}Proxmox LXC Disk Shrinker v${VERSION}${NC}
 Shrinks an LXC container's root disk to current usage + ${HEADROOM_GB}GB.
 This reduces the disk size required for conversion with lxc-to-vm.sh.
 
-Usage: $0 [OPTIONS]
+Usage: $0 [OPTIONS] [CTID ...]
 
 Options:
-  -c, --ctid <ID>        Container ID to shrink (e.g., 100)
+  -c, --ctid <ID>        Container ID(s) to shrink. Repeat the flag or give a
+                         comma/space-separated list (e.g., -c 100,101,102).
+                         Bare numeric arguments are also accepted.
   -g, --headroom <GB>    Extra headroom above used space (default: ${HEADROOM_GB})
   -n, --dry-run          Show what would be done without making changes
+  -y, --yes              Non-interactive: auto-accept confirmations.
+                         Issues requiring attention are still reported and
+                         abort that container (batch continues with the next ID).
   -h, --help             Show this help message
   -V, --version          Show version
 
 Examples:
   $0 -c 100                  # Shrink CT 100 to usage + 1GB
   $0 -c 100 -g 2             # Shrink with 2GB extra headroom
-  $0 -c 100 --dry-run        # Preview only, no changes
+  $0 -c 100,101,102 -y       # Batch shrink three containers, auto-accept
+  $0 100 101 --dry-run       # Preview batch shrink for two containers
 
 Storage Support:
   - LVM-thin: Most efficient, shrinks LV directly
@@ -286,18 +293,27 @@ echo "--- shrink-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 # Supports both short (-c) and long (--ctid) option formats
 
 # Initialize all variables with defaults
-CTID=""        # Container ID - required
+CTIDS=()       # Container IDs - required (one or more)
 DRY_RUN=false  # Preview mode flag - set to true with --dry-run
+AUTO_YES=false # Auto-accept confirmations - set to true with --yes
 
 # Process command-line arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -c|--ctid)      CTID="$2";         shift 2 ;;  # Container ID (numeric)
-        -g|--headroom)   HEADROOM_GB="$2";  shift 2 ;;  # Extra space in GB
+        -c|--ctid)
+            [[ $# -ge 2 ]] || die "Option $1 requires an argument"
+            IFS=',' read -ra _ids <<< "${2// /,}"
+            CTIDS+=("${_ids[@]}")
+            shift 2 ;;
+        -g|--headroom)
+            [[ $# -ge 2 ]] || die "Option $1 requires an argument"
+            HEADROOM_GB="$2";  shift 2 ;;  # Extra space in GB
         -n|--dry-run)    DRY_RUN=true;      shift ;;    # Preview only mode
+        -y|--yes)        AUTO_YES=true;     shift ;;    # Auto-accept prompts
         -h|--help)       usage ;;                      # Show help and exit
         -V|--version)    echo "v${VERSION}"; exit 0 ;;  # Show version and exit
-        *)               die "Unknown option: $1 (use --help)" ;;
+        -*)              die "Unknown option: $1 (use --help)" ;;
+        *)               CTIDS+=("$1");      shift ;;   # Positional CTID
     esac
 done
 
@@ -307,24 +323,89 @@ e "${BOLD}==========================================${NC}"
 e "${BOLD}     PROXMOX LXC DISK SHRINKER v${VERSION}${NC}"
 e "${BOLD}==========================================${NC}"
 
-# --- Interactive Mode ---
-# If CTID wasn't provided via command line, prompt interactively
-# This makes the script user-friendly for ad-hoc interactive use
-[[ -z "$CTID" ]] && read -rp "Enter Container ID to shrink (e.g., 100): " CTID
-
 # ==============================================================================
 # INPUT VALIDATION
 # ==============================================================================
 # Validate all inputs before proceeding with any destructive operations
 
-# Container ID must be a positive integer
-[[ "$CTID" =~ ^[0-9]+$ ]]        || die "Container ID must be a positive integer, got: '$CTID'"
+# --- Interactive Mode ---
+# If no CTIDs were provided via command line, prompt interactively
+if [[ ${#CTIDS[@]} -eq 0 ]]; then
+    if $AUTO_YES || [[ ! -t 0 ]]; then
+        die "No container IDs specified (use -c or positional IDs, see --help)."
+    fi
+    read -rp "Enter Container ID(s) to shrink (e.g., 100 or 100,101,102): " _ids_input
+    IFS=',' read -ra CTIDS <<< "${_ids_input// /,}"
+fi
+
+# Validate IDs and drop duplicates
+declare -A _seen_ids=()
+UNIQUE_IDS=()
+for _id in "${CTIDS[@]}"; do
+    [[ "$_id" =~ ^[0-9]+$ ]] || die "Container ID must be a positive integer, got: '$_id'"
+    if [[ -n "${_seen_ids[$_id]:-}" ]]; then
+        warn "Duplicate container ID '$_id' ignored."
+        continue
+    fi
+    _seen_ids[$_id]=1
+    UNIQUE_IDS+=("$_id")
+done
+CTIDS=("${UNIQUE_IDS[@]}")
 
 # Headroom must be a positive integer (no decimals)
 [[ "$HEADROOM_GB" =~ ^[0-9]+$ ]] || die "Headroom must be a positive integer (GB), got: '$HEADROOM_GB'"
 
 # Require at least 1GB headroom to prevent immediate out-of-space issues
 [[ "$HEADROOM_GB" -ge 1 ]]       || die "Headroom must be at least 1 GB."
+
+for _cmd in "${REQUIRED_CMDS[@]}"; do
+    command -v "$_cmd" &>/dev/null || die "Required command not found: $_cmd"
+done
+
+# ==============================================================================
+# BATCH MODE — process each container via a fresh single-ID run so a failure
+# on one container (hands-on issue) doesn't abort the rest of the batch.
+# ==============================================================================
+if [[ ${#CTIDS[@]} -gt 1 ]]; then
+    CHILD_ARGS=(-g "$HEADROOM_GB")
+    $DRY_RUN  && CHILD_ARGS+=(--dry-run)
+    $AUTO_YES && CHILD_ARGS+=(--yes)
+
+    log "Batch mode: shrinking ${#CTIDS[@]} containers (${CTIDS[*]})"
+
+    SUCCEEDED=() SKIPPED=() FAILED=()
+    for _id in "${CTIDS[@]}"; do
+        echo ""
+        e "${BOLD}========== CT ${_id} ==========${NC}"
+        if bash "$0" -c "$_id" "${CHILD_ARGS[@]}"; then
+            SUCCEEDED+=("$_id")
+        else
+            _rc=$?
+            if [[ "$_rc" -eq "$E_ABORT" ]]; then
+                SKIPPED+=("$_id")
+                warn "CT $_id skipped (aborted by user)."
+            else
+                FAILED+=("$_id")
+                err "CT $_id failed (exit $_rc). Continuing with next container..."
+            fi
+        fi
+    done
+
+    echo ""
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "${GREEN}${BOLD}         BATCH SHRINK COMPLETE${NC}"
+    e "${GREEN}${BOLD}==========================================${NC}"
+    e "  ${BOLD}Succeeded:${NC}  ${#SUCCEEDED[@]} (${SUCCEEDED[*]:-none})"
+    e "  ${BOLD}Skipped:${NC}    ${#SKIPPED[@]} (${SKIPPED[*]:-none})"
+    e "  ${BOLD}Failed:${NC}     ${#FAILED[@]} (${FAILED[*]:-none})"
+    e "  ${BOLD}Log:${NC}        $LOG_FILE"
+    echo ""
+
+    [[ ${#FAILED[@]} -eq 0 ]] || exit "$E_SHRINK_FAILED"
+    exit 0
+fi
+
+CTID="${CTIDS[0]}"
 
 # Verify container actually exists in Proxmox before proceeding
 if ! pct config "$CTID" >/dev/null 2>&1; then
@@ -443,15 +524,15 @@ USED_GB=$(( (USED_MB + 1023) / 1024 ))
 #   - Superblock copies (filesystem headers)
 #   - Block group descriptors
 # Without this margin, the filesystem might not fit after shrink operation
-META_MARGIN_MB=$(( USED_MB * 5 / 100 ))
-[[ "$META_MARGIN_MB" -lt 512 ]] && META_MARGIN_MB=512
+META_MARGIN_MB=$(( USED_MB * META_MARGIN_PCT / 100 ))
+[[ "$META_MARGIN_MB" -lt "$META_MARGIN_MIN_MB" ]] && META_MARGIN_MB=$META_MARGIN_MIN_MB
 META_MARGIN_GB=$(( (META_MARGIN_MB + 1023) / 1024 ))
 
 # Calculate final target size: actual usage + metadata overhead + user headroom
 NEW_SIZE_GB=$(( USED_GB + META_MARGIN_GB + HEADROOM_GB ))
 
 # Enforce absolute minimum regardless of calculations (safety check)
-[[ "$NEW_SIZE_GB" -lt 2 ]] && NEW_SIZE_GB=2
+[[ "$NEW_SIZE_GB" -lt "$MIN_DISK_GB" ]] && NEW_SIZE_GB=$MIN_DISK_GB
 
 # Format for human-readable display using numfmt (IEC binary units: GiB, MiB)
 USED_HR=$(numfmt --to=iec-i --suffix=B "${USED_BYTES:-0}" 2>/dev/null || echo "${USED_MB}MB")
@@ -545,9 +626,13 @@ echo ""
 e "${YELLOW}${BOLD}WARNING: This will shrink the disk for container $CTID${NC}"
 e "  ${BOLD}Current:${NC} ${CURRENT_SIZE_GB}GB → ${BOLD}New:${NC} ${NEW_SIZE_GB}GB (saving ${SAVINGS_GB}GB)"
 echo ""
-read -rp "Continue? [y/N]: " CONFIRM
-# If user says no, abort and restart container if needed
-[[ "$CONFIRM" =~ ^[Yy]$ ]] || { log "Aborted by user."; $CT_WAS_RUNNING && pct start "$CTID" 2>/dev/null || true; exit 0; }
+if $AUTO_YES; then
+    log "Auto-accepting confirmation (--yes)."
+else
+    read -rp "Continue? [y/N]: " CONFIRM
+    # If user says no, abort and restart container if needed
+    [[ "$CONFIRM" =~ ^[Yy]$ ]] || { log "Aborted by user."; $CT_WAS_RUNNING && pct start "$CTID" 2>/dev/null || true; exit "$E_ABORT"; }
+fi
 
 # ==============================================================================
 # PERFORM SHRINK (storage-type specific)

@@ -30,6 +30,9 @@ sudo ./shrink-vm.sh -v 100 -u
 
 # Preview changes without applying
 sudo ./shrink-vm.sh -v 100 --dry-run
+
+# Batch shrink multiple VMs, auto-accepting confirmations
+sudo ./shrink-vm.sh -v 100,101,102 -y
 ```
 
 ---
@@ -38,13 +41,34 @@ sudo ./shrink-vm.sh -v 100 --dry-run
 
 | Short | Long | Description | Default |
 | ----- | ---- | ----------- | ------- |
-| `-v` | `--vmid <ID>` | VM ID to shrink | Prompted |
+| `-v` | `--vmid <ID>` | VM ID(s) to shrink — repeat flag or comma/space list | Prompted |
 | `-g` | `--headroom <GB>` | Extra GB above used space | `2` |
 | `-n` | `--dry-run` | Show what would be done without changes | — |
 | `-u` | `--use-libguestfs` | Use `virt-resize` for safer shrink | — |
 | | `--skip-fs-check` | Skip filesystem checks (not recommended) | — |
+| | `--force` | Override Windows 30GB minimum size enforcement | — |
+| | `--os-type <TYPE>` | Override OS detection (`linux`, `windows`) | — |
+| `-y` | `--yes` | Non-interactive: auto-accept confirmations | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
+
+Bare numeric arguments are also accepted as VM IDs (e.g., `./shrink-vm.sh 100 101`).
+
+---
+
+## Batch Mode
+
+Passing more than one VM ID runs the script in batch mode: each VM is processed in turn by a fresh single-ID run, and a summary is printed at the end.
+
+```bash
+sudo ./shrink-vm.sh -v 100,101,102 -y      # comma list
+sudo ./shrink-vm.sh -v 100 -v 101 -v 102   # repeated flag
+sudo ./shrink-vm.sh 100 101 102 --yes      # positional IDs
+```
+
+- A failure on one VM does **not** abort the batch — the error is reported (hands-on attention needed) and processing continues with the next ID.
+- Declining the confirmation prompt marks that VM as *skipped*; without `--yes` you are prompted per VM.
+- The script exits non-zero (`5`, `E_SHRINK_FAILED`) if any VM failed, `0` otherwise.
 
 ---
 
@@ -122,7 +146,7 @@ sudo ./shrink-vm.sh -v 100 --dry-run
 - **VM is stopped** before any disk modification (no live disk writes)
 - **Filesystem check** (`e2fsck`) before and after shrink
 - **Minimum 2GB disk size** is enforced
-- **Confirmation prompt** before destructive operations
+- **Confirmation prompt** before destructive operations (auto-accepted with `--yes`)
 - **VM restarted** automatically after shrink (if it was running)
 
 ---
@@ -149,7 +173,8 @@ sudo ./shrink-vm.sh -v 100 --dry-run
 | `2` | `E_NOT_FOUND` | VM or storage not found |
 | `3` | `E_DISK_FULL` | Disk space issue |
 | `4` | `E_PERMISSION` | Permission denied |
-| `5` | `E_SHRINK_FAILED` | Shrink operation failed |
+| `5` | `E_SHRINK_FAILED` | Shrink operation failed (also: batch mode with ≥1 failure) |
+| `10` | `E_ABORT` | Aborted by user at the confirmation prompt |
 
 ---
 

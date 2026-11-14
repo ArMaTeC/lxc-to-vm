@@ -57,6 +57,7 @@ readonly E_SHRINK_FAILED=5
 readonly E_WINDOWS_MIN_SIZE=6
 readonly E_NTFS_DIRTY=7
 readonly E_LIBGUESTFS=8
+readonly E_ABORT=10
 
 HEADROOM_GB=$DEFAULT_HEADROOM_GB
 FORCE=false
@@ -183,23 +184,29 @@ ${BOLD}Proxmox VM Disk Shrinker v${VERSION}${NC}
 
 Shrinks a VM's disk to current usage + ${HEADROOM_GB}GB headroom.
 
-Usage: $0 [OPTIONS]
+Usage: $0 [OPTIONS] [VMID ...]
 
 Options:
-  -v, --vmid <ID>        VM ID to shrink (e.g., 100)
+  -v, --vmid <ID>        VM ID(s) to shrink. Repeat the flag or give a
+                         comma/space-separated list (e.g., -v 100,101,102).
+                         Bare numeric arguments are also accepted.
   -g, --headroom <GB>    Extra headroom above used space (default: ${HEADROOM_GB})
   -n, --dry-run          Show what would be done without making changes
   -u, --use-libguestfs   Use virt-resize/libguestfs (more reliable, slower)
   --skip-fs-check        Skip filesystem checks (not recommended)
   --force                Override Windows 30GB minimum size enforcement
   --os-type <TYPE>       Override OS detection (linux, windows)
+  -y, --yes              Non-interactive: auto-accept confirmations.
+                         Issues requiring attention are still reported and
+                         abort that VM (batch continues with the next ID).
   -h, --help             Show this help message
   -V, --version          Show version
 
 Examples:
   $0 -v 100                  # Shrink VM 100 to usage + 2GB
   $0 -v 100 -g 5             # Shrink with 5GB extra headroom
-  $0 -v 100 --dry-run        # Preview only, no changes
+  $0 -v 100,101,102 -y       # Batch shrink three VMs, auto-accept
+  $0 100 101 --dry-run       # Preview batch shrink for two VMs
   $0 -v 100 -u               # Use libguestfs for safer shrink
   $0 -v 100 --force          # Force shrink below Windows minimum
 
@@ -243,23 +250,34 @@ fi
 # ==============================================================================
 # COMMAND-LINE ARGUMENT PARSING
 # ==============================================================================
-VMID=""
+VMIDS=()
 DRY_RUN=false
 USE_LIBGUESTFS=false
 SKIP_FS_CHECK=false
+AUTO_YES=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -v|--vmid)       VMID="$2"; shift 2 ;;
-        -g|--headroom)   HEADROOM_GB="$2"; shift 2 ;;
+        -v|--vmid)
+            [[ $# -ge 2 ]] || die "Option $1 requires an argument"
+            IFS=',' read -ra _ids <<< "${2// /,}"
+            VMIDS+=("${_ids[@]}")
+            shift 2 ;;
+        -g|--headroom)
+            [[ $# -ge 2 ]] || die "Option $1 requires an argument"
+            HEADROOM_GB="$2"; shift 2 ;;
         -n|--dry-run)    DRY_RUN=true; shift ;;
         -u|--use-libguestfs) USE_LIBGUESTFS=true; shift ;;
         --skip-fs-check) SKIP_FS_CHECK=true; shift ;;
         --force)         FORCE=true; shift ;;
-        --os-type)       OS_TYPE_OVERRIDE="$2"; shift 2 ;;
+        --os-type)
+            [[ $# -ge 2 ]] || die "Option $1 requires an argument"
+            OS_TYPE_OVERRIDE="$2"; shift 2 ;;
+        -y|--yes)        AUTO_YES=true; shift ;;
         -h|--help)       usage ;;
         -V|--version)    echo "v${VERSION}"; exit 0 ;;
-        *)               die "Unknown option: $1 (use --help)" ;;
+        -*)              die "Unknown option: $1 (use --help)" ;;
+        *)               VMIDS+=("$1"); shift ;;
     esac
 done
 
@@ -267,14 +285,86 @@ e "${BOLD}========================================${NC}"
 e "${BOLD}     PROXMOX VM DISK SHRINKER v${VERSION}${NC}"
 e "${BOLD}========================================${NC}"
 
-[[ -z "$VMID" ]] && read -rp "Enter VM ID to shrink (e.g., 100): " VMID
-
 # ==============================================================================
 # INPUT VALIDATION
 # ==============================================================================
-[[ "$VMID" =~ ^[0-9]+$ ]] || die "VM ID must be a positive integer, got: '$VMID'"
+if [[ ${#VMIDS[@]} -eq 0 ]]; then
+    if $AUTO_YES || [[ ! -t 0 ]]; then
+        die "No VM IDs specified (use -v or positional IDs, see --help)."
+    fi
+    read -rp "Enter VM ID(s) to shrink (e.g., 100 or 100,101,102): " _ids_input
+    IFS=',' read -ra VMIDS <<< "${_ids_input// /,}"
+fi
+
+# Validate IDs and drop duplicates
+declare -A _seen_ids=()
+UNIQUE_IDS=()
+for _id in "${VMIDS[@]}"; do
+    [[ "$_id" =~ ^[0-9]+$ ]] || die "VM ID must be a positive integer, got: '$_id'"
+    if [[ -n "${_seen_ids[$_id]:-}" ]]; then
+        warn "Duplicate VM ID '$_id' ignored."
+        continue
+    fi
+    _seen_ids[$_id]=1
+    UNIQUE_IDS+=("$_id")
+done
+VMIDS=("${UNIQUE_IDS[@]}")
+
 [[ "$HEADROOM_GB" =~ ^[0-9]+$ ]] || die "Headroom must be a positive integer (GB), got: '$HEADROOM_GB'"
 [[ "$HEADROOM_GB" -ge 1 ]] || die "Headroom must be at least 1 GB."
+
+for _cmd in "${REQUIRED_CMDS[@]}"; do
+    command -v "$_cmd" &>/dev/null || die "Required command not found: $_cmd"
+done
+
+# ==============================================================================
+# BATCH MODE — process each VM via a fresh single-ID run so a failure on one
+# VM (hands-on issue) doesn't abort the rest of the batch.
+# ==============================================================================
+if [[ ${#VMIDS[@]} -gt 1 ]]; then
+    CHILD_ARGS=(-g "$HEADROOM_GB")
+    $DRY_RUN        && CHILD_ARGS+=(--dry-run)
+    $USE_LIBGUESTFS && CHILD_ARGS+=(--use-libguestfs)
+    $SKIP_FS_CHECK  && CHILD_ARGS+=(--skip-fs-check)
+    $FORCE          && CHILD_ARGS+=(--force)
+    [[ -n "$OS_TYPE_OVERRIDE" ]] && CHILD_ARGS+=(--os-type "$OS_TYPE_OVERRIDE")
+    $AUTO_YES       && CHILD_ARGS+=(--yes)
+
+    log "Batch mode: shrinking ${#VMIDS[@]} VMs (${VMIDS[*]})"
+
+    SUCCEEDED=() SKIPPED=() FAILED=()
+    for _id in "${VMIDS[@]}"; do
+        echo ""
+        e "${BOLD}========== VM ${_id} ==========${NC}"
+        if bash "$0" -v "$_id" "${CHILD_ARGS[@]}"; then
+            SUCCEEDED+=("$_id")
+        else
+            _rc=$?
+            if [[ "$_rc" -eq "$E_ABORT" ]]; then
+                SKIPPED+=("$_id")
+                warn "VM $_id skipped (aborted by user)."
+            else
+                FAILED+=("$_id")
+                err "VM $_id failed (exit $_rc). Continuing with next VM..."
+            fi
+        fi
+    done
+
+    echo ""
+    e "${GREEN}${BOLD}========================================${NC}"
+    e "${GREEN}${BOLD}         BATCH SHRINK COMPLETE${NC}"
+    e "${GREEN}${BOLD}========================================${NC}"
+    e "  ${BOLD}Succeeded:${NC}  ${#SUCCEEDED[@]} (${SUCCEEDED[*]:-none})"
+    e "  ${BOLD}Skipped:${NC}    ${#SKIPPED[@]} (${SKIPPED[*]:-none})"
+    e "  ${BOLD}Failed:${NC}     ${#FAILED[@]} (${FAILED[*]:-none})"
+    e "  ${BOLD}Log:${NC}        $LOG_FILE"
+    echo ""
+
+    [[ ${#FAILED[@]} -eq 0 ]] || exit "$E_SHRINK_FAILED"
+    exit 0
+fi
+
+VMID="${VMIDS[0]}"
 
 if ! qm config "$VMID" >/dev/null 2>&1; then
     die "VM $VMID does not exist."
@@ -380,22 +470,20 @@ if command -v virt-df &>/dev/null && [[ "$IMG_FORMAT" == "qcow2" || "$IMG_FORMAT
     log "Using virt-df to analyze disk usage..."
     VIRT_DF_OUT=$(virt-df -a "$DISK_PATH" 2>/dev/null | tail -n +2) || VIRT_DF_OUT=""
     if [[ -n "$VIRT_DF_OUT" ]]; then
-        # Parse the used column (typically 3rd column, in bytes)
-        USED_BYTES=$(echo "$VIRT_DF_OUT" | awk '{sum+=$3} END {print sum}')
-        if [[ -n "$USED_BYTES" && "$USED_BYTES" -gt 0 ]]; then
-            USED_GB=$((USED_BYTES / 1024 / 1024 / 1024))
+        # virt-df reports columns in 1K-blocks: sum the "Used" column (3rd)
+        USED_KB=$(echo "$VIRT_DF_OUT" | awk '{sum+=$3} END {print sum}')
+        if [[ -n "$USED_KB" && "$USED_KB" -gt 0 ]]; then
+            USED_GB=$(( (USED_KB + 1048575) / 1048576 ))
         fi
     fi
 fi
 
-# Fallback: use qemu-img info for allocated size (qcow2 only)
+# Fallback: use on-disk allocation for qcow2 images
 if [[ "$USED_GB" -eq 0 && "$IMG_FORMAT" == "qcow2" ]]; then
-    log "Using qemu-img allocated size..."
-    ALLOCATED_BYTES=$(qemu-img info "$DISK_PATH" 2>/dev/null | grep "disk size" | grep -oP '[0-9]+' | head -1)
-    if [[ -n "$ALLOCATED_BYTES" ]]; then
-        # qemu-img reports in bytes (K/M/G)
-        ALLOC_STR=$(qemu-img info "$DISK_PATH" 2>/dev/null | grep "disk size" | awk '{print $3}')
-        USED_GB=$(echo "$ALLOC_STR" | sed 's/GiB//;s/MiB//;s/KiB//' | cut -d'.' -f1)
+    log "Using allocated size of qcow2 image..."
+    ALLOC_BYTES=$(du -B1 "$DISK_PATH" 2>/dev/null | awk '{print $1}')
+    if [[ -n "$ALLOC_BYTES" && "$ALLOC_BYTES" -gt 0 ]]; then
+        USED_GB=$(( (ALLOC_BYTES + 1073741823) / 1073741824 ))
     fi
 fi
 
@@ -481,13 +569,18 @@ echo ""
 e "${YELLOW}${BOLD}WARNING: This will shrink the disk for VM $VMID${NC}"
 e "  ${BOLD}Current:${NC} ${CURRENT_SIZE_GB}GB → ${BOLD}New:${NC} ${NEW_SIZE_GB}GB (saving ${SAVINGS_GB}GB)"
 echo ""
-read -rp "Continue? [y/N]: " CONFIRM
-[[ "$CONFIRM" =~ ^[Yy]$ ]] || { log "Aborted by user."; $VM_WAS_RUNNING && qm start "$VMID" 2>/dev/null || true; exit 0; }
+if $AUTO_YES; then
+    log "Auto-accepting confirmation (--yes)."
+else
+    read -rp "Continue? [y/N]: " CONFIRM
+    [[ "$CONFIRM" =~ ^[Yy]$ ]] || { log "Aborted by user."; $VM_WAS_RUNNING && qm start "$VMID" 2>/dev/null || true; exit "$E_ABORT"; }
+fi
 
 # ==============================================================================
 # PERFORM SHRINK
 # ==============================================================================
 log "Beginning shrink operation..."
+SHRINK_DONE=false
 
 # ------------------------------------------------------------------------------
 # Windows VM shrink path
@@ -540,10 +633,12 @@ else
             rm -f /tmp/vm-${VMID}-new.raw "$TEMP_RAW"
             trap - EXIT
             ok "Shrink complete via libguestfs."
+            SHRINK_DONE=true
         fi
     fi
 
     # Standard shrink method by storage type
+    if ! $SHRINK_DONE; then
 case "$STORAGE_TYPE" in
     lvmthin|lvm)
         log "Processing LVM volume..."
@@ -668,6 +763,7 @@ case "$STORAGE_TYPE" in
         die "Unsupported storage type: $STORAGE_TYPE"
         ;;
 esac
+    fi
 fi
 
 # Update VM config with new size

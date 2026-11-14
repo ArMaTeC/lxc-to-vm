@@ -14,6 +14,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Batch mode and non-interactive flag** (`shrink-vm.sh`, `shrink-lxc.sh`)
+  - `-v`/`--vmid` and `-c`/`--ctid` now accept multiple IDs: repeat the flag,
+    use comma/space-separated lists, or pass bare numeric arguments
+  - New `-y`/`--yes` flag auto-accepts all confirmations for unattended runs;
+    issues that need attention still abort that guest and are reported
+  - Batch mode processes each ID in a fresh run, so a failure on one guest
+    doesn't stop the rest; prints a succeeded/skipped/failed summary and
+    exits `E_SHRINK_FAILED` (5) if any ID failed
+  - Declining the confirmation prompt now exits `E_ABORT` (10) instead of `0`
+    so batch mode can distinguish user-skipped items from successes
+  - Declared `REQUIRED_CMDS` are now actually verified before starting
+
+### Fixed
+
+- **`shrink-vm.sh`**: a successful libguestfs (`-u`) shrink no longer falls
+  through into the standard per-storage shrink path (previously shrank twice)
+- **`shrink-vm.sh`**: `virt-df` used space was read as bytes while the tool
+  reports 1K-blocks, so measured usage always fell back to a 50% estimate
+- **`shrink-lxc.sh`**: use declared `MIN_DISK_GB`, `META_MARGIN_PCT`, and
+  `META_MARGIN_MIN_MB` constants instead of duplicated literals
+- **Docs**: `shrink-lxc.md`/`Examples.md` documented non-existent flags
+  (`--resize`, `--size`, `--temp-dir`); rewritten to match the real CLI
+
 ## [6.2.1] - 2026-11-03
 
 ## [6.2.0] - 2026-10-14

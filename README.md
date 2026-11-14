@@ -271,9 +271,9 @@ lxc-to-vm/
 | ------ | ------- | --------- |
 | `lxc-to-vm.sh` | LXC → VM conversion | `-c` (CT ID), `-v` (VM ID), `-s` (storage), `-p` (extra pkgs), `--start`, `--shrink` |
 | `vm-to-lxc.sh` | VM → LXC conversion | `-v` (VM ID), `-c` (CT ID), `-s` (storage), `--start`, `--snapshot` |
-| `shrink-lxc.sh` | Shrink LXC disk | `-c` (CT ID), `--dry-run` |
+| `shrink-lxc.sh` | Shrink LXC disk | `-c` (CT IDs), `-g` (headroom), `-y` (auto-accept), `--dry-run` |
 | `expand-lxc.sh` | Expand LXC disk | `-c` (CT ID), `-s` (size), `-a` (add), `--max`, `--no-restart` |
-| `shrink-vm.sh` | Shrink VM disk | `-v` (VM ID), `-g` (headroom), `-u` (libguestfs), `--os-type`, `--dry-run` |
+| `shrink-vm.sh` | Shrink VM disk | `-v` (VM IDs), `-g` (headroom), `-u` (libguestfs), `-y` (auto-accept), `--os-type`, `--dry-run` |
 | `expand-vm.sh` | Expand VM disk | `-v` (VM ID), `-s` (size), `-a` (add), `--max`, `--hot-expand`, `--os-type` |
 | `clone-replace-disk.sh` | Clone & replace disk | `-t` (type), `-i` (ID), `--size`, `--remove-old`, `--os-type`, `--dry-run` |
 | `test-remote-pve.sh` | Remote PVE testing | Edit config vars in script, then run without args |
