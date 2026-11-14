@@ -23,19 +23,21 @@
 - **🔄 Bidirectional Conversion** - LXC ↔ VM and VM ↔ LXC
 - **🐧 Multi-Distro Support** - Debian, Ubuntu, Alpine, RHEL/CentOS/Rocky, Arch Linux
 - **🪟 Windows VM Support** - Shrink, expand, and clone-replace Windows VM disks (NTFS)
-- **📉 Smart Disk Shrinking** - Optimize disk size before conversion
-- **� Flexible Disk Expansion** - Grow containers with multiple expansion modes
-- **�️ Snapshot Safety** - Automatic rollback on failure
-- **📊 Batch Processing** - Convert multiple workloads at once
+- **📉 Smart Disk Shrinking** - Optimize disk size before conversion (multiple IDs supported)
+- **📈 Flexible Disk Expansion** - Grow containers and VMs with online (`qm resize` / `pct resize`) or offline modes
+- **🛡️ Snapshot Safety** - Automatic rollback on failure
+- **📊 Batch Processing** - Convert multiple workloads at once with per-item failure reporting
+- **🤖 Non-Interactive Mode** - `-y/--yes` auto-accepts prompts; batch runs exit non-zero on failures
+- **⏱️ Graceful Guest Shutdown** - Shutdown + status polling with timed fallback instead of hard stops and fixed sleeps
 - **🔌 Hook System** - Custom automation at every stage
 - **🧙 Interactive Wizard** - TUI mode for guided conversion
-- **🛡️ Pre-Flight Safety** - Detect existing VM/CT IDs and verify target storage space before changes
+- **🔍 Pre-Flight Safety** - Detect existing VM/CT IDs and verify target storage space before changes
 - **☁️ Cloud Export** - Export to S3, NFS, or remote storage
 - **🧪 Remote Testing** - Automated remote PVE validation with `test-remote-pve.sh`
 
 ---
 
-## � Documentation
+## 📖 Documentation
 
 In addition to the project [Wiki](https://github.com/ArMaTeC/lxc-to-vm/wiki), the
 following documentation is shipped with this repository:
@@ -48,7 +50,7 @@ following documentation is shipped with this repository:
 - [`docs/Internals.md`](docs/Internals.md) — Architecture, data flow, and contributor guide.
 - [`docs/man/`](docs/man/) — Markdown sources for man pages (render with Pandoc).
 
-## �🚀 Quick Start
+## 🚀 Quick Start
 
 ### Installation
 
@@ -92,6 +94,9 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 
 # Convert and install extra packages in the guest (works with apt/dnf/yum/apk/pacman/zypper)
 sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm -d 32 -p "curl htop" --start
+
+# Fully unattended batch conversion (auto-accepts prompts, non-zero exit on any failure)
+sudo ./lxc-to-vm.sh --batch ct-list.txt -s local-lvm -y --start
 ```
 
 ### Expand LXC (Standalone)
@@ -106,7 +111,7 @@ sudo ./expand-lxc.sh -c 100 -a 50
 # Use maximum available space
 sudo ./expand-lxc.sh -c 100 --max
 
-# Hot-expand without restart (LVM/ZFS supported)
+# Online expansion without restart (uses pct resize — all storage types)
 sudo ./expand-lxc.sh -c 100 -s 200 --no-restart
 ```
 
@@ -121,6 +126,9 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --start
 
 # With snapshot safety
 sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --snapshot --start
+
+# Fully unattended (auto-accepts prompts)
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm -y --start
 ```
 
 ### Shrink LXC (Standalone)
@@ -129,8 +137,11 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --snapshot --start
 # Optimize container before manual operations
 sudo ./shrink-lxc.sh -c 100
 
-# Show help options
-sudo ./shrink-lxc.sh -c 100 --help
+# Shrink several containers in one run, auto-accepting prompts
+sudo ./shrink-lxc.sh -c 100,101,102 -y
+
+# Show help options (works without root)
+./shrink-lxc.sh --help
 ```
 
 ### Shrink VM (Standalone)
@@ -144,6 +155,9 @@ sudo ./shrink-vm.sh -v 100 -g 5
 
 # Use libguestfs for safer shrink (slower)
 sudo ./shrink-vm.sh -v 100 -u
+
+# Shrink multiple VMs unattended, keeping temp files on a large volume
+sudo ./shrink-vm.sh -v 100,101,102 -y -t /mnt/storage/tmp
 
 # Dry-run preview
 sudo ./shrink-vm.sh -v 100 --dry-run
@@ -161,8 +175,11 @@ sudo ./expand-vm.sh -v 100 -a 50
 # Use maximum available space
 sudo ./expand-vm.sh -v 100 --max
 
-# Hot-expand while VM is running (LVM/ZFS/QCOW2)
+# Hot-expand while VM is running (uses native 'qm resize' — all storage types)
 sudo ./expand-vm.sh -v 100 -s 200 --hot-expand
+
+# Non-interactive (auto-accepts confirmations)
+sudo ./expand-vm.sh -v 100 -s 200 -y
 ```
 
 ### Clone & Replace Disk (Fix Expansion Issues)
@@ -182,13 +199,18 @@ sudo ./clone-replace-disk.sh -t vm -i 200 --size 250 --remove-old
 
 # Preview changes
 sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
+
+# Non-interactive (alias for --force)
+sudo ./clone-replace-disk.sh -t vm -i 100 -d scsi0 --size 300 -y
 ```
 
 ### Remote PVE Testing
 
 ```bash
 # Test conversions on a remote Proxmox host
-sudo ./test-remote-pve.sh
+# Configure via environment variables (PVE_HOST, PVE_USER, PVE_PASS);
+# SSH key auth is used automatically when PVE_PASS is unset.
+PVE_HOST=192.0.2.10 PVE_USER=root PVE_PASS=secret sudo -E ./test-remote-pve.sh
 ```
 
 ---
@@ -269,14 +291,20 @@ lxc-to-vm/
 
 | Script | Purpose | Key Flags |
 | ------ | ------- | --------- |
-| `lxc-to-vm.sh` | LXC → VM conversion | `-c` (CT ID), `-v` (VM ID), `-s` (storage), `-p` (extra pkgs), `--start`, `--shrink` |
-| `vm-to-lxc.sh` | VM → LXC conversion | `-v` (VM ID), `-c` (CT ID), `-s` (storage), `--start`, `--snapshot` |
-| `shrink-lxc.sh` | Shrink LXC disk | `-c` (CT IDs), `-g` (headroom), `-y` (auto-accept), `--dry-run` |
-| `expand-lxc.sh` | Expand LXC disk | `-c` (CT ID), `-s` (size), `-a` (add), `--max`, `--no-restart` |
-| `shrink-vm.sh` | Shrink VM disk | `-v` (VM IDs), `-g` (headroom), `-u` (libguestfs), `-y` (auto-accept), `--os-type`, `--dry-run` |
-| `expand-vm.sh` | Expand VM disk | `-v` (VM ID), `-s` (size), `-a` (add), `--max`, `--hot-expand`, `--os-type` |
-| `clone-replace-disk.sh` | Clone & replace disk | `-t` (type), `-i` (ID), `--size`, `--remove-old`, `--os-type`, `--dry-run` |
-| `test-remote-pve.sh` | Remote PVE testing | Edit config vars in script, then run without args |
+| `lxc-to-vm.sh` | LXC → VM conversion | `-c` (CT ID), `-v` (VM ID), `-s` (storage), `-p` (extra pkgs), `--start`, `--shrink`, `--batch`, `-y` (auto-accept) |
+| `vm-to-lxc.sh` | VM → LXC conversion | `-v` (VM ID), `-c` (CT ID), `-s` (storage), `--start`, `--snapshot`, `--batch`, `-y` (auto-accept) |
+| `shrink-lxc.sh` | Shrink LXC disk(s) | `-c` (CT IDs, repeatable/comma/space list), `-g` (headroom), `-y` (auto-accept), `--dry-run` |
+| `expand-lxc.sh` | Expand LXC disk | `-c` (CT ID), `-s` (size), `-a` (add), `--max`, `--no-restart` (online `pct resize`), `-y` (auto-accept) |
+| `shrink-vm.sh` | Shrink VM disk(s) | `-v` (VM IDs, repeatable/comma/space list), `-g` (headroom), `-u` (libguestfs), `-t` (temp dir), `-y` (auto-accept), `--os-type`, `--dry-run` |
+| `expand-vm.sh` | Expand VM disk | `-v` (VM ID), `-s` (size), `-a` (add), `--max`, `--hot-expand` (online `qm resize`), `-y`/`--force`, `--os-type` |
+| `clone-replace-disk.sh` | Clone & replace disk | `-t` (type), `-i` (ID), `--size`, `--remove-old`, `--os-type`, `-y`/`--force`, `--dry-run` |
+| `test-remote-pve.sh` | Remote PVE testing | Configure `PVE_HOST`/`PVE_USER`/`PVE_PASS` env vars (SSH keys if `PVE_PASS` unset), then run |
+
+**Non-interactive runs:** pass `-y/--yes` to auto-accept prompts. Batch modes process every
+item, print a success/skip/fail summary, and exit non-zero if anything failed — issues that
+need attention are still reported rather than auto-accepted.
+
+**Unprivileged use:** `--help` and `--version` work without root on all scripts.
 
 ---
 
