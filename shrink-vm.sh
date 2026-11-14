@@ -672,7 +672,16 @@ case "$STORAGE_TYPE" in
             resize2fs "$LV_PATH" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1 || die "Filesystem shrink failed."
             
             log "Shrinking LV..."
-            lvresize -y -L "${NEW_SIZE_GB}G" "$LV_PATH" >> "$LOG_FILE" 2>&1 || die "LV shrink failed."
+            LV_OUT=""
+            if LV_OUT=$(lvresize -y -L "${NEW_SIZE_GB}G" "$LV_PATH" 2>&1); then
+                echo "$LV_OUT" >> "$LOG_FILE"
+            elif [[ "$LV_OUT" == *"matches existing size"* || "$LV_OUT" == *"No size change"* ]]; then
+                echo "$LV_OUT" >> "$LOG_FILE"
+                warn "LV already at ${NEW_SIZE_GB}GB — no LV resize needed."
+            else
+                echo "$LV_OUT" >> "$LOG_FILE"
+                die "LV shrink failed."
+            fi
             
             if ! $SKIP_FS_CHECK; then
                 log "Verifying filesystem..."

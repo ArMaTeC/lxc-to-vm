@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`shrink-lxc.sh`**: a container whose filesystem minimum (`resize2fs -P`)
+  was at or above the current disk size failed with "lvresize failed" in
+  batch runs — the adjusted target is now re-checked and the run exits
+  cleanly with a restart when there is nothing to shrink. `lvresize`
+  "matches existing size" is treated as a no-op, not an error
+- **`shrink-lxc.sh`**: unchecked `resize2fs` calls in the dir/qcow2 and ZFS
+  branches could report success and then truncate/shrink the volume below
+  the filesystem minimum (silent corruption); targets are now clamped to
+  the filesystem minimum and failures abort before resizing
+- **`shrink-vm.sh`**: `lvresize` "matches existing size" no longer counts
+  as a failure
+
 ## [6.2.2] - 2026-11-14
 
 ### Added

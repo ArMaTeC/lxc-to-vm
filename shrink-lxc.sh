@@ -283,6 +283,24 @@ if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
 fi
 
 # ==============================================================================
+# HELPERS
+# ==============================================================================
+
+# Print the resize2fs -P minimum size (GB) of the ext* filesystem on DEV,
+# rounded up plus a small metadata safety margin. Prints 0 if it cannot be
+# determined.
+fs_min_gb() {
+    local dev="$1" min_out min_blocks block_size
+    min_out=$(resize2fs -P "$dev" 2>&1) || true
+    echo "$min_out" >> "$LOG_FILE"
+    min_blocks=$(echo "$min_out" | grep -oP 'minimum size.*?:\s*\K[0-9]+' || echo "0")
+    [[ "$min_blocks" -gt 0 ]] || { echo 0; return; }
+    block_size=$(dumpe2fs -h "$dev" 2>/dev/null | awk '/Block size:/{print $3}')
+    block_size="${block_size:-4096}"
+    echo $(( min_blocks * block_size / 1073741824 + 2 ))
+}
+
+# ==============================================================================
 # COMMAND-LINE ARGUMENT PARSING
 # ==============================================================================
 # Parse options using standard bash getopts-style case statement
@@ -679,21 +697,25 @@ case "$STORAGE_TYPE" in
 
         # Step 2: Query the true minimum filesystem size
         log "Querying minimum filesystem size (resize2fs -P)..."
-        MIN_OUT=$(resize2fs -P "$LV_PATH" 2>&1) || true
-        echo "$MIN_OUT" | tee -a "$LOG_FILE"
-        # Parse: "Estimated minimum size of the filesystem: 8069671" (in 4K blocks)
-        MIN_BLOCKS=$(echo "$MIN_OUT" | grep -oP 'minimum size.*?:\s*\K[0-9]+' || echo "0")
-        if [[ "$MIN_BLOCKS" -gt 0 ]]; then
-            # Get block size
-            BLOCK_SIZE=$(dumpe2fs -h "$LV_PATH" 2>/dev/null | awk '/Block size:/{print $3}')
-            BLOCK_SIZE="${BLOCK_SIZE:-4096}"
-            MIN_SIZE_GB=$(( (MIN_BLOCKS * BLOCK_SIZE / 1073741824) + 2 ))  # Round up + 1GB safety
-            log "Filesystem minimum: ${MIN_BLOCKS} blocks × ${BLOCK_SIZE}B = ~${MIN_SIZE_GB}GB"
+        MIN_SIZE_GB=$(fs_min_gb "$LV_PATH")
+        if [[ "$MIN_SIZE_GB" -gt 0 ]]; then
+            log "Filesystem minimum: ~${MIN_SIZE_GB}GB"
             if [[ "$NEW_SIZE_GB" -lt "$MIN_SIZE_GB" ]]; then
                 warn "Target ${NEW_SIZE_GB}GB is below filesystem minimum ${MIN_SIZE_GB}GB. Adjusting."
                 NEW_SIZE_GB="$MIN_SIZE_GB"
                 log "Adjusted target: ${NEW_SIZE_GB}GB"
             fi
+        fi
+
+        # The filesystem minimum may push the target back up to (or beyond)
+        # the current size — in that case there is nothing to shrink.
+        if [[ "$NEW_SIZE_GB" -ge "$CURRENT_SIZE_GB" ]]; then
+            ok "Filesystem minimum leaves no room to shrink — disk already ${CURRENT_SIZE_GB}GB."
+            if $CT_WAS_RUNNING; then
+                log "Restarting container $CTID..."
+                pct start "$CTID" 2>/dev/null || true
+            fi
+            exit 0
         fi
 
         # Step 3: Shrink filesystem with auto-retry
@@ -732,6 +754,9 @@ case "$STORAGE_TYPE" in
         if LV_OUT=$(lvresize -y -L "${NEW_SIZE_GB}G" "$LV_PATH" 2>&1); then
             echo "$LV_OUT" | tee -a "$LOG_FILE"
             ok "LV shrunk to ${NEW_SIZE_GB}GB."
+        elif [[ "$LV_OUT" == *"matches existing size"* || "$LV_OUT" == *"No size change"* ]]; then
+            echo "$LV_OUT" | tee -a "$LOG_FILE"
+            ok "LV is already ${NEW_SIZE_GB}GB — no resize needed."
         else
             echo "$LV_OUT" | tee -a "$LOG_FILE"
             warn "lvresize failed. Running e2fsck to recover..."
@@ -780,9 +805,31 @@ case "$STORAGE_TYPE" in
                 e2fsck -f -y "$LOOP_DEV" >> "$LOG_FILE" 2>&1 || die "Filesystem check failed."
             }
 
+            # Clamp target to the filesystem's true minimum — truncating the
+            # image below it would corrupt the filesystem.
+            MIN_SIZE_GB=$(fs_min_gb "$LOOP_DEV")
+            if [[ "$MIN_SIZE_GB" -gt 0 && "$NEW_SIZE_GB" -lt "$MIN_SIZE_GB" ]]; then
+                warn "Target ${NEW_SIZE_GB}GB is below filesystem minimum ${MIN_SIZE_GB}GB. Adjusting."
+                NEW_SIZE_GB="$MIN_SIZE_GB"
+            fi
+            if [[ "$NEW_SIZE_GB" -ge "$CURRENT_SIZE_GB" ]]; then
+                ok "Filesystem minimum leaves no room to shrink — disk already ${CURRENT_SIZE_GB}GB."
+                losetup -d "$LOOP_DEV" 2>/dev/null || true
+                trap - EXIT
+                if $CT_WAS_RUNNING; then
+                    log "Restarting container $CTID..."
+                    pct start "$CTID" 2>/dev/null || true
+                fi
+                exit 0
+            fi
+
             # Shrink the filesystem to target size
             log "Shrinking filesystem to ${NEW_SIZE_GB}GB..."
-            resize2fs "$LOOP_DEV" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1
+            resize2fs "$LOOP_DEV" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1 || {
+                losetup -d "$LOOP_DEV" 2>/dev/null || true
+                trap - EXIT
+                die "Filesystem shrink failed — image left unmodified."
+            }
             ok "Filesystem shrunk."
 
             # Detach loop device before truncating file
@@ -816,8 +863,31 @@ case "$STORAGE_TYPE" in
                 }
             }
 
+            # Clamp target to the filesystem's true minimum (see raw path).
+            MIN_SIZE_GB=$(fs_min_gb "$LOOP_DEV")
+            if [[ "$MIN_SIZE_GB" -gt 0 && "$NEW_SIZE_GB" -lt "$MIN_SIZE_GB" ]]; then
+                warn "Target ${NEW_SIZE_GB}GB is below filesystem minimum ${MIN_SIZE_GB}GB. Adjusting."
+                NEW_SIZE_GB="$MIN_SIZE_GB"
+            fi
+            if [[ "$NEW_SIZE_GB" -ge "$CURRENT_SIZE_GB" ]]; then
+                ok "Filesystem minimum leaves no room to shrink — disk already ${CURRENT_SIZE_GB}GB."
+                losetup -d "$LOOP_DEV" 2>/dev/null || true
+                rm -f "$TEMP_RAW"
+                trap - EXIT
+                if $CT_WAS_RUNNING; then
+                    log "Restarting container $CTID..."
+                    pct start "$CTID" 2>/dev/null || true
+                fi
+                exit 0
+            fi
+
             log "Shrinking filesystem to ${NEW_SIZE_GB}GB..."
-            resize2fs "$LOOP_DEV" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1
+            resize2fs "$LOOP_DEV" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1 || {
+                losetup -d "$LOOP_DEV" 2>/dev/null || true
+                rm -f "$TEMP_RAW"
+                trap - EXIT
+                die "Filesystem shrink failed — image left unmodified."
+            }
 
             losetup -d "$LOOP_DEV" 2>/dev/null || true
 
@@ -855,14 +925,29 @@ case "$STORAGE_TYPE" in
             e2fsck -f -y "$ZFS_VOL" >> "$LOG_FILE" 2>&1 || die "Filesystem check failed."
         }
 
+        # Clamp target to the filesystem's true minimum.
+        MIN_SIZE_GB=$(fs_min_gb "$ZFS_VOL")
+        if [[ "$MIN_SIZE_GB" -gt 0 && "$NEW_SIZE_GB" -lt "$MIN_SIZE_GB" ]]; then
+            warn "Target ${NEW_SIZE_GB}GB is below filesystem minimum ${MIN_SIZE_GB}GB. Adjusting."
+            NEW_SIZE_GB="$MIN_SIZE_GB"
+        fi
+        if [[ "$NEW_SIZE_GB" -ge "$CURRENT_SIZE_GB" ]]; then
+            ok "Filesystem minimum leaves no room to shrink — disk already ${CURRENT_SIZE_GB}GB."
+            if $CT_WAS_RUNNING; then
+                log "Restarting container $CTID..."
+                pct start "$CTID" 2>/dev/null || true
+            fi
+            exit 0
+        fi
+
         # Shrink filesystem
         log "Shrinking filesystem to ${NEW_SIZE_GB}GB..."
-        resize2fs "$ZFS_VOL" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1
+        resize2fs "$ZFS_VOL" "${NEW_SIZE_GB}G" >> "$LOG_FILE" 2>&1 || die "Filesystem shrink failed — zvol left unmodified."
         ok "Filesystem shrunk."
 
         # Shrink ZFS volume
         log "Shrinking ZFS volume to ${NEW_SIZE_GB}GB..."
-        zfs set volsize="${NEW_SIZE_GB}G" "$ZFS_DATASET" >> "$LOG_FILE" 2>&1
+        zfs set volsize="${NEW_SIZE_GB}G" "$ZFS_DATASET" >> "$LOG_FILE" 2>&1 || die "ZFS volsize update failed."
         ok "ZFS volume shrunk."
 
         # Verify filesystem
