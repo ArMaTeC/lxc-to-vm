@@ -47,8 +47,9 @@ sudo ./expand-lxc.sh -c 100 -a 20 --dry-run
 | `-n` | `--dry-run` | Show what would be done without changes | — |
 | | `--safety-margin <GB>` | GB to keep free when using `--max` | `10` |
 | | `--safety-percent <N>` | Percent of pool to keep free when using `--max` | `5` |
-| | `--no-restart` | Keep container running (hot-expand where supported) | — |
+| | `--no-restart` | Keep container running (online `pct resize` where supported) | — |
 | | `--force` | Skip confirmation prompts | — |
+| `-y` | `--yes` | Same as `--force` (non-interactive) | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -109,13 +110,13 @@ sudo ./expand-lxc.sh -c 100 --max --safety-margin 20
 
 ## Hot-Expand (No Restart)
 
-For LVM, LVM-thin, ZFS, and raw directory storage, the container can remain running during expansion using `--no-restart`:
+For LVM, LVM-thin, ZFS, and raw directory storage, the container can remain running during expansion using `--no-restart`, which performs an online resize via `pct resize`:
 
 ```bash
 sudo ./expand-lxc.sh -c 100 -s 200 --no-restart
 ```
 
-If the storage type does not support hot-expansion, the container will be stopped and restarted automatically.
+If the storage type does not support online resize (e.g. qcow2 on directory storage, NFS/CIFS), the script fails with an error rather than stopping your container — drop `--no-restart` to do a stop/resize/restart instead.
 
 ---
 

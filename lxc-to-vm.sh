@@ -341,6 +341,7 @@ Options:
   --migrate-to-local     Auto-migrate container to local node if on remote
   --predict-size         Use predictive advisor for disk size (analyze growth patterns)
   --skip-checks          Skip ID-collision and storage free-space pre-checks
+  -y, --yes              Answer yes to all confirmation prompts (non-interactive)
   --no-auto-fix          Disable automatic remediation when health checks detect known issues
   -h, --help             Show this help message
   -V, --version          Show version
@@ -371,19 +372,6 @@ Examples:
 USAGE
     exit 0
 }
-
-# --- Root check ---
-# All Proxmox operations (pct, qm, pvesm) require root access
-# Container mounting, loop device creation, and VM creation all need root
-if [[ "$EUID" -ne 0 ]]; then
-    die "This script must be run as root (try: sudo $0)"
-fi
-
-# --- Initialise log ---
-# Create log directory if missing
-# Add timestamp header to distinguish between runs
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "--- lxc-to-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 ### Function: ensure_dependency
 # Verify a command is available, installing its package via apt if missing.
@@ -1134,6 +1122,7 @@ process_batch_file() {
     e "  ${BOLD}Successful:${NC} $success_count"
     e "  ${BOLD}Failed:${NC}     $fail_count"
     e "  ${BOLD}Total:${NC}      $((success_count + fail_count))"
+    [[ "$fail_count" -eq 0 ]] || exit 1
     exit 0
 }
 
@@ -1193,6 +1182,7 @@ process_range() {
     e "  ${BOLD}Successful:${NC} $success_count"
     e "  ${BOLD}Failed:${NC}     $fail_count"
     e "  ${BOLD}Total:${NC}      $((success_count + fail_count))"
+    [[ "$fail_count" -eq 0 ]] || exit 1
     exit 0
 }
 
@@ -1274,7 +1264,7 @@ CTID="" VMID="" STORAGE="" DISK_SIZE="" DISK_FORMAT="qcow2" BRIDGE="vmbr0" WORK_
 BIOS_TYPE="seabios" DRY_RUN=false KEEP_NETWORK=false AUTO_START=false SHRINK_FIRST=false
 CREATE_SNAPSHOT=false ROLLBACK_ON_FAILURE=false DESTROY_SOURCE=false RESUME_MODE=false
 BATCH_FILE="" RANGE_SPEC="" PROFILE_NAME="" SAVE_PROFILE_NAME=""
-WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false
+WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false ASSUME_YES=false
 EXPORT_DEST="" AS_TEMPLATE=false SYSPREP=false
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
 AUTO_FIX=true SKIP_CHECKS=false
@@ -1297,6 +1287,7 @@ while [[ $# -gt 0 ]]; do
         -S|--start)      AUTO_START=true;   shift ;;
         --no-auto-fix)   AUTO_FIX=false;    shift ;;
         --skip-checks)   SKIP_CHECKS=true;  shift ;;
+        -y|--yes)        ASSUME_YES=true;   shift ;;
         --shrink)        SHRINK_FIRST=true; shift ;;
         --snapshot)      CREATE_SNAPSHOT=true; shift ;;
         --rollback-on-failure) ROLLBACK_ON_FAILURE=true; shift ;;
@@ -1324,6 +1315,19 @@ while [[ $# -gt 0 ]]; do
         *)               die "Unknown option: $1 (use --help)" ;;
     esac
 done
+
+# --- Root check ---
+# All Proxmox operations (pct, qm, pvesm) require root access. Parsed
+# arguments first so --help/--version work unprivileged.
+if [[ "$EUID" -ne 0 ]]; then
+    die "This script must be run as root (try: sudo $0)"
+fi
+
+# --- Initialise log ---
+# Create log directory if missing
+# Add timestamp header to distinguish between runs
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "--- lxc-to-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
 # 1.5. PROFILE & BATCH MODE HANDLING
@@ -1360,10 +1364,13 @@ if $WIZARD_MODE; then
     run_wizard
 fi
 
-# Handle parallel batch processing
-if [[ -n "$BATCH_FILE" ]] && [[ "$PARALLEL_JOBS" -gt 1 ]]; then
-    process_batch_parallel "$BATCH_FILE" "$PARALLEL_JOBS"
-    exit 0
+# Handle batch processing (parallel when --parallel N > 1)
+if [[ -n "$BATCH_FILE" ]]; then
+    if [[ "$PARALLEL_JOBS" -gt 1 ]]; then
+        process_batch_parallel "$BATCH_FILE" "$PARALLEL_JOBS"
+    else
+        process_batch_file "$BATCH_FILE"
+    fi
 fi
 
 # Handle range mode
@@ -1706,6 +1713,8 @@ process_batch_parallel() {
     local completed=0
     local success_count=0
     local fail_count=0
+    local results_file
+    results_file=$(mktemp /tmp/lxc-to-vm-results.XXXXXX)
 
     log "Total conversions to process: $total"
 
@@ -1725,9 +1734,9 @@ process_batch_parallel() {
         (
             log "Starting background conversion: CT $batch_ctid → VM $batch_vmid"
             if run_single_conversion "$batch_ctid" "$batch_vmid" >> "$LOG_FILE" 2>&1; then
-                echo "SUCCESS:$batch_ctid:$batch_vmid"
+                echo "SUCCESS:$batch_ctid:$batch_vmid" >> "$results_file"
             else
-                echo "FAILED:$batch_ctid:$batch_vmid"
+                echo "FAILED:$batch_ctid:$batch_vmid" >> "$results_file"
             fi
         ) &
 
@@ -1736,15 +1745,24 @@ process_batch_parallel() {
         log "Progress: $completed/$total started ($running running)"
     done
 
-    # Wait for all jobs
+    # Wait for all jobs, then tally results
     wait
+
+    success_count=$(grep -c '^SUCCESS:' "$results_file" 2>/dev/null || echo 0)
+    fail_count=$(grep -c '^FAILED:' "$results_file" 2>/dev/null || echo 0)
+    grep '^FAILED:' "$results_file" 2>/dev/null | sed 's/^FAILED:/  FAILED: CT /' | sed 's/:/ → VM /' >&2 || true
+    rm -f "$results_file"
 
     echo ""
     e "${GREEN}${BOLD}==========================================${NC}"
     e "${GREEN}${BOLD}         BATCH CONVERSION COMPLETE${NC}"
     e "${GREEN}${BOLD}==========================================${NC}"
+    e "  ${BOLD}Successful:${NC} $success_count"
+    e "  ${BOLD}Failed:${NC}     $fail_count"
     e "  ${BOLD}Total:${NC}      $total"
     echo ""
+    [[ "$fail_count" -eq 0 ]] || exit 1
+    exit 0
 }
 
 # ==============================================================================
@@ -1821,9 +1839,8 @@ convert_to_template() {
     local vmid="$1"
     log "Converting VM $vmid to template..."
 
-    # Stop VM first if running
-    qm stop "$vmid" 2>/dev/null || true
-    sleep 2
+    # Stop VM first if running (graceful, then force)
+    stop_guest_gracefully vm "$vmid" 60
 
     # Run sysprep if requested
     if $SYSPREP; then
@@ -1912,11 +1929,14 @@ ensure_dependency kpartx
 ensure_dependency rsync
 ensure_dependency mkfs.ext4 e2fsprogs
 
-# Interactive prompts for missing arguments
-[[ -z "$CTID" ]]      && read -rp "Enter Source Container ID (e.g., 100): " CTID
-[[ -z "$VMID" ]]      && read -rp "Enter New VM ID (e.g., 200): " VMID
-[[ -z "$STORAGE" ]]   && read -rp "Enter Target Storage Name (e.g., local-lvm): " STORAGE
-[[ -z "$DISK_SIZE" ]] && ! $SHRINK_FIRST && read -rp "Enter Disk Size in GB (must be > used space, e.g., 32): " DISK_SIZE
+# Interactive prompts for missing arguments (skipped under --yes;
+# missing values fail the validation below instead)
+if ! $ASSUME_YES; then
+    [[ -z "$CTID" ]]      && read -rp "Enter Source Container ID (e.g., 100): " CTID
+    [[ -z "$VMID" ]]      && read -rp "Enter New VM ID (e.g., 200): " VMID
+    [[ -z "$STORAGE" ]]   && read -rp "Enter Target Storage Name (e.g., local-lvm): " STORAGE
+    [[ -z "$DISK_SIZE" ]] && ! $SHRINK_FIRST && read -rp "Enter Disk Size in GB (must be > used space, e.g., 32): " DISK_SIZE
+fi
 
 # --- Input Validation ---
 [[ "$CTID" =~ ^[0-9]+$ ]]      || die "Container ID must be a positive integer, got: '$CTID'"
@@ -1964,8 +1984,7 @@ if [[ "$CT_STATUS" == "running" ]]; then
         warn "Container $CTID is running. Would stop it for a consistent copy."
     else
         warn "Container $CTID is running. Stopping it for a consistent copy..."
-        pct stop "$CTID"
-        sleep 2
+        stop_guest_gracefully ct "$CTID" 60
     fi
 fi
 
@@ -2310,6 +2329,15 @@ pick_work_dir() {
         local auto_path="${candidates_mp[0]}"
         local auto_avail="${candidates_avail[0]}"
         ok "Auto-selecting workspace: $auto_path (${auto_avail}MB free)" >&2
+        mkdir -p "$auto_path" 2>/dev/null || die "Cannot create directory: $auto_path"
+        echo "$auto_path"
+        return 0
+    fi
+
+    # Non-interactive: pick the first (largest free space) candidate
+    if $ASSUME_YES; then
+        local auto_path="${candidates_mp[0]}"
+        ok "Auto-selecting workspace: $auto_path (${candidates_avail[0]}MB free)" >&2
         mkdir -p "$auto_path" 2>/dev/null || die "Cannot create directory: $auto_path"
         echo "$auto_path"
         return 0
@@ -3288,7 +3316,7 @@ auto_fix_boot_rw_issue() {
 
     log "Attempting automatic remediation for VM $VMID (root read-only/remount failure)..."
 
-    qm stop "$VMID" >/dev/null 2>&1 || true
+    stop_guest_gracefully vm "$VMID" 60
 
     vm_disk_volid=$(qm config "$VMID" 2>/dev/null | awk -F': ' '/^scsi0:/{print $2; exit}' | cut -d',' -f1)
     [[ -n "$vm_disk_volid" ]] || {

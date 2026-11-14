@@ -127,6 +127,11 @@ check_target_collision() {
         return 0
     fi
 
+    if [[ "${ASSUME_YES:-false}" == "true" ]]; then
+        warn "${target_type^^} ID $target_id already exists; will overwrite (--yes set)"
+        return 0
+    fi
+
     echo ""
     warn "${target_type^^} ID $target_id already exists. Continuing will DESTROY it and its data."
     read -rp "Continue and overwrite? [y/N]: " confirm
@@ -157,18 +162,20 @@ check_target_space() {
     [[ -z "$storage" ]] && die "Storage name required for space check"
     [[ "$required_gb" =~ ^[0-9]+$ ]] || die "Required space must be an integer (GB)"
 
-    local first_volid
-    first_volid=$(get_first_storage_volid "$storage") || true
-
     local storage_type
     storage_type=$(pvesm status 2>/dev/null | awk -v s="$storage" 'NR>1 && $1==s{print $2; exit}')
     [[ -n "$storage_type" ]] || die "Storage '$storage' not found"
 
     case "$storage_type" in
         lvmthin|lvm)
-            local vg_name
-            # Try to derive the VG from an existing volume on this storage
-            [[ -n "$first_volid" ]] && vg_name=$(pvesm path "$first_volid" 2>/dev/null | cut -d'/' -f3)
+            local vg_name=""
+            # Derive the VG from an existing volume on this storage
+            local first_volid vol_path
+            first_volid=$(get_first_storage_volid "$storage") || true
+            if [[ -n "$first_volid" ]]; then
+                vol_path=$(pvesm path "$first_volid" 2>/dev/null) || true
+                [[ -n "$vol_path" ]] && vg_name=$(lvm_vg_from_path "$vol_path") || true
+            fi
             [[ -z "$vg_name" ]] && vg_name=$(vgs --noheadings -o vg_name 2>/dev/null | head -1 | tr -d ' ')
             [[ -n "$vg_name" ]] || die "Could not determine volume group for '$storage'"
             local free_mb
@@ -194,4 +201,200 @@ check_target_space() {
 
     ok "Storage '$storage' has ${free_gb}GB free (required for ${label}: ${required_gb}GB)"
     return 0
+}
+
+### Function: lvm_vg_from_path
+# Derive the LVM volume-group name from a device path.
+#
+# Handles /dev/<vg>/<lv>, /dev/mapper/<vg>-<lv> (device-mapper
+# double-dash escaping), and /dev/dm-* via dmsetup.
+#
+# Arguments:
+#   $1 - Device path.
+#
+# Outputs:
+#   The VG name to stdout.
+#
+# Returns:
+#   0 on success, 1 if the VG cannot be determined.
+lvm_vg_from_path() {
+    local path="$1" vg="" name=""
+    case "$path" in
+        /dev/mapper/*)
+            name="${path#/dev/mapper/}"
+            ;;
+        /dev/dm-*)
+            name=$(dmsetup info --noheadings -c -o name "$path" 2>/dev/null | tr -d ' ')
+            ;;
+        /dev/*/*)
+            vg="${path#/dev/}"
+            vg="${vg%%/*}"
+            printf '%s\n' "$vg"
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    # device-mapper escapes '-' inside names as '--'; the vg/lv separator
+    # is a single '-'. Decode escaped dashes, then take the first field.
+    if [[ -n "$name" ]]; then
+        vg=$(printf '%s' "$name" | sed 's/--/\x01/g; s/-.*//; s/\x01/-/g')
+    fi
+    [[ -n "$vg" ]] || return 1
+    printf '%s\n' "$vg"
+}
+
+### Function: storage_cfg_value
+# Read a parameter value for a storage from /etc/pve/storage.cfg.
+#
+# Arguments:
+#   $1 - Storage name (e.g., "local-lvm")
+#   $2 - Parameter key (e.g., "vgname", "pool", "path")
+#
+# Outputs:
+#   The parameter value to stdout, or nothing if not found.
+#
+# Returns:
+#   0 if a value was printed, 1 otherwise.
+storage_cfg_value() {
+    local name="$1" key="$2"
+    [[ -r /etc/pve/storage.cfg ]] || return 1
+    awk -v name="$name" -v key="$key" '
+        /^[[:alnum:]_-]+:/ {
+            sub(/:$/, "", $1)
+            inblock = (NF >= 2 && $2 == name)
+        }
+        inblock && $1 == key { print $2; exit }
+    ' /etc/pve/storage.cfg
+}
+
+### Function: storage_target_dir
+# Resolve the host directory where disk images for a directory-based
+# storage live. With a guest ID, returns <path>/images/<id>.
+#
+# Arguments:
+#   $1 - Storage name.
+#   $2 - Optional guest ID for the images/<id> subdirectory.
+#
+# Outputs:
+#   The directory path to stdout.
+#
+# Returns:
+#   0 on success, 1 if it cannot be determined.
+storage_target_dir() {
+    local storage="$1" guest_id="${2:-}" base="" volid="" vpath=""
+
+    base=$(storage_cfg_value "$storage" path) || base=""
+    if [[ -z "$base" ]]; then
+        volid=$(get_first_storage_volid "$storage") || true
+        if [[ -n "$volid" ]]; then
+            vpath=$(pvesm path "$volid" 2>/dev/null) || true
+            # Images live under <path>/images/<id>/<file>
+            [[ -n "$vpath" ]] && base="${vpath%/images/*}"
+        fi
+    fi
+    [[ -n "$base" ]] || return 1
+
+    if [[ -n "$guest_id" ]]; then
+        printf '%s/images/%s\n' "$base" "$guest_id"
+    else
+        printf '%s\n' "$base"
+    fi
+}
+
+### Function: storage_vg_name
+# Resolve the LVM volume group backing a storage, from storage.cfg
+# first, then an existing volume path, then a VG scan.
+#
+# Arguments:
+#   $1 - Storage name.
+#
+# Outputs:
+#   The VG name to stdout.
+#
+# Returns:
+#   0 on success, 1 if it cannot be determined.
+storage_vg_name() {
+    local storage="$1" vg="" volid="" vpath=""
+
+    vg=$(storage_cfg_value "$storage" vgname) || vg=""
+    if [[ -z "$vg" ]]; then
+        volid=$(get_first_storage_volid "$storage") || true
+        if [[ -n "$volid" ]]; then
+            vpath=$(pvesm path "$volid" 2>/dev/null) || true
+            [[ -n "$vpath" ]] && vg=$(lvm_vg_from_path "$vpath") || true
+        fi
+    fi
+    [[ -z "$vg" ]] && vg=$(vgs --noheadings -o vg_name 2>/dev/null | head -1 | tr -d ' ')
+    [[ -n "$vg" ]] || return 1
+    printf '%s\n' "$vg"
+}
+
+### Function: storage_zfs_pool
+# Resolve the ZFS pool/dataset backing a zfspool storage, from
+# storage.cfg first, then an existing volume's parent dataset.
+#
+# Arguments:
+#   $1 - Storage name.
+#
+# Outputs:
+#   The ZFS pool/dataset to stdout.
+#
+# Returns:
+#   0 on success, 1 if it cannot be determined.
+storage_zfs_pool() {
+    local storage="$1" pool="" volid="" vpath=""
+
+    pool=$(storage_cfg_value "$storage" pool) || pool=""
+    if [[ -z "$pool" ]]; then
+        volid=$(get_first_storage_volid "$storage") || true
+        if [[ -n "$volid" ]]; then
+            vpath=$(pvesm path "$volid" 2>/dev/null) || true
+            vpath="${vpath#/dev/zvol/}"
+            [[ -n "$vpath" ]] && pool="${vpath%/*}"
+        fi
+    fi
+    [[ -z "$pool" ]] && pool=$(zpool list -H -o name 2>/dev/null | head -1)
+    [[ -n "$pool" ]] || return 1
+    printf '%s\n' "$pool"
+}
+
+### Function: stop_guest_gracefully
+# Ask a guest to shut down (qm/pct shutdown), poll until stopped, and
+# fall back to a hard stop after the timeout.
+#
+# Arguments:
+#   $1 - Guest type: "vm" or "ct"
+#   $2 - Guest ID
+#   $3 - Grace period in seconds before forcing a stop (default: 60)
+#
+# Returns:
+#   0 once the guest is stopped.
+stop_guest_gracefully() {
+    local type="$1" id="$2" timeout="${3:-60}"
+    local status_cmd shutdown_cmd stop_cmd
+    case "$type" in
+        vm)
+            status_cmd="qm status"; shutdown_cmd="qm shutdown"; stop_cmd="qm stop" ;;
+        ct|lxc)
+            status_cmd="pct status"; shutdown_cmd="pct shutdown"; stop_cmd="pct stop" ;;
+        *)
+            warn "stop_guest_gracefully: unknown guest type '$type'"
+            return 1
+            ;;
+    esac
+
+    $shutdown_cmd "$id" >>"${LOG_FILE:-/dev/null}" 2>&1 || true
+    local waited=0 state=""
+    while [[ "$waited" -lt "$timeout" ]]; do
+        state=$($status_cmd "$id" 2>/dev/null | awk '{print $2}')
+        [[ "$state" == "stopped" ]] && return 0
+        sleep 2
+        waited=$((waited + 2))
+    done
+    warn "Graceful shutdown of $type $id timed out after ${timeout}s; forcing stop."
+    $stop_cmd "$id" >>"${LOG_FILE:-/dev/null}" 2>&1 || true
+    sleep 2
 }

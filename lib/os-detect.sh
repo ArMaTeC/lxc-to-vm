@@ -42,7 +42,7 @@ detect_os_from_disk() {
     fi
 
     # Fallback path: partition type heuristics
-    if _detect_via_partition_types "$disk_path"; then
+    if _detect_via_partition_types "$disk_path" "$img_format"; then
         if [[ "$OS_TYPE" == "unknown" ]]; then
             return 1
         fi
@@ -122,6 +122,8 @@ _detect_via_guestfs() {
 #
 # Arguments:
 #   $1 - Path to the disk image.
+#   $2 - Disk image format (default: "raw"). Non-raw formats (e.g. qcow2)
+#        are exposed read-only via qemu-nbd when available.
 #
 # Globals (set by this function):
 #   OS_TYPE, OS_DISTRO, OS_BOOT_MODE,
@@ -131,6 +133,7 @@ _detect_via_guestfs() {
 #   0 on success (even if OS_TYPE remains "unknown"), 1 if fdisk/parted unavailable.
 _detect_via_partition_types() {
     local disk_path="$1"
+    local img_format="${2:-raw}"
     local fdisk_out=""
     local file_out=""
 
@@ -139,13 +142,57 @@ _detect_via_partition_types() {
         return 1
     fi
 
-    # Try to get partition table info
+    # Non-raw images (e.g. qcow2) cannot be read by fdisk/file directly —
+    # expose them read-only through qemu-nbd when available.
+    local probe_path="$disk_path" nbd_dev=""
+    if [[ "$img_format" != "raw" ]]; then
+        command -v qemu-nbd &>/dev/null || return 1
+        modprobe nbd max_part=8 2>/dev/null || true
+        local i
+        for i in $(seq 0 15); do
+            if [[ -b "/dev/nbd${i}" && ! -e "/sys/block/nbd${i}/pid" ]]; then
+                nbd_dev="/dev/nbd${i}"
+                break
+            fi
+        done
+        [[ -n "$nbd_dev" ]] || return 1
+        qemu-nbd -r -c "$nbd_dev" "$disk_path" 2>/dev/null || return 1
+        probe_path="$nbd_dev"
+        # Give the kernel a moment to notice the partition table
+        sleep 1
+        partprobe "$nbd_dev" 2>/dev/null || true
+    fi
+
+    # --- Probe phase (needs a readable block device) ---
     if command -v fdisk &>/dev/null; then
-        fdisk_out=$(fdisk -l "$disk_path" 2>/dev/null || true)
+        fdisk_out=$(fdisk -l "$probe_path" 2>/dev/null || true)
+    fi
+
+    local part1="" ntfs_probe=false
+    if [[ -n "$fdisk_out" ]]; then
+        part1=$(echo "$fdisk_out" | grep -E '^/dev/' | head -1 || true)
+
+        if [[ -n "$part1" ]] && command -v file &>/dev/null; then
+            file_out=$(file -sL "$probe_path" 2>/dev/null || true)
+        fi
+
+        # Pre-probe for NTFS while the device is still attached
+        if echo "$fdisk_out" | grep -qiE "EFI|EF00" && command -v ntfscluster &>/dev/null; then
+            if ntfscluster "$probe_path" &>/dev/null || \
+               ntfscluster "${probe_path}p1" &>/dev/null || \
+               ntfscluster "${probe_path}1" &>/dev/null; then
+                ntfs_probe=true
+            fi
+        fi
+    fi
+
+    if [[ -n "$nbd_dev" ]]; then
+        qemu-nbd -d "$nbd_dev" 2>/dev/null || true
     fi
 
     [[ -z "$fdisk_out" ]] && return 1
 
+    # --- Evaluation phase ---
     # Check for GPT
     if echo "$fdisk_out" | grep -qi "gpt"; then
         OS_PARTITION_TABLE="gpt"
@@ -160,34 +207,19 @@ _detect_via_partition_types() {
     fi
 
     # Check first partition filesystem type
-    local part1=""
-    part1=$(echo "$fdisk_out" | grep -E '^/dev/' | head -1 || true)
-    if [[ -n "$part1" ]]; then
-        # Try file -sL on the disk path itself or the partition device
-        if command -v file &>/dev/null; then
-            file_out=$(file -sL "$disk_path" 2>/dev/null || true)
-        fi
-
-        if [[ -n "$file_out" ]]; then
-            if echo "$file_out" | grep -qiE "ntfs|windows"; then
-                OS_TYPE="windows"
-                OS_DISTRO="windows"
-            elif echo "$file_out" | grep -qiE "ext[234]|xfs|btrfs|linux"; then
-                OS_TYPE="linux"
-            fi
+    if [[ -n "$part1" && -n "$file_out" ]]; then
+        if echo "$file_out" | grep -qiE "ntfs|windows"; then
+            OS_TYPE="windows"
+            OS_DISTRO="windows"
+        elif echo "$file_out" | grep -qiE "ext[234]|xfs|btrfs|linux"; then
+            OS_TYPE="linux"
         fi
     fi
 
-    # If still unknown but GPT with ESP, try ntfs-3g probe as last resort
-    if [[ "$OS_TYPE" == "unknown" && "$OS_HAS_ESP" == "true" ]]; then
-        if command -v ntfscluster &>/dev/null; then
-            if ntfscluster "$disk_path" &>/dev/null || \
-               ntfscluster "${disk_path}p1" &>/dev/null || \
-               ntfscluster "${disk_path}1" &>/dev/null; then
-                OS_TYPE="windows"
-                OS_DISTRO="windows"
-            fi
-        fi
+    # If still unknown but GPT with ESP, use the NTFS probe result
+    if [[ "$OS_TYPE" == "unknown" && "$OS_HAS_ESP" == "true" && "$ntfs_probe" == "true" ]]; then
+        OS_TYPE="windows"
+        OS_DISTRO="windows"
     fi
 
     return 0

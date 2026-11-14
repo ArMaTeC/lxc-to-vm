@@ -5,7 +5,7 @@
      License: MIT
      ============================================================================== -->
 <!-- markdownlint-disable MD041 -->
-% SHRINK-LXC(1) lxc-to-vm 6.0.6
+% SHRINK-LXC(1) lxc-to-vm 6.2.1
 
 # NAME
 

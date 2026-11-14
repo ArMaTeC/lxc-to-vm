@@ -5,7 +5,7 @@
      License: MIT
      ============================================================================== -->
 <!-- markdownlint-disable MD041 -->
-% CLONE-REPLACE-DISK(1) lxc-to-vm 6.0.6
+% CLONE-REPLACE-DISK(1) lxc-to-vm 6.2.1
 
 # NAME
 
@@ -43,6 +43,12 @@ for storage migration or resizing operations.
 
 **-n, --dry-run**
 : Preview actions without making changes.
+
+**--force**, **-y, --yes**
+: Skip confirmation prompts (non-interactive).
+
+**--skip-checks**
+: Skip the storage free-space pre-check.
 
 **-h, --help**
 : Show help and exit.

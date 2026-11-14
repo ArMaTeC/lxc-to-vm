@@ -49,6 +49,7 @@ sudo ./shrink-vm.sh -v 100,101,102 -y
 | | `--force` | Override Windows 30GB minimum size enforcement | — |
 | | `--os-type <TYPE>` | Override OS detection (`linux`, `windows`) | — |
 | `-y` | `--yes` | Non-interactive: auto-accept confirmations | — |
+| `-t` | `--temp-dir` | Directory for temp raw images (qcow2/libguestfs paths) | `/var/tmp` |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 

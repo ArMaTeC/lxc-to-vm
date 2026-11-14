@@ -47,10 +47,14 @@ expansion modes. Hot-expand is supported on most storage backends.
 : Reserve this percentage of the pool when using `--max` (default: 5).
 
 **--no-restart**
-: Keep the container running where hot-expand is supported.
+: Keep the container running: perform an online resize via `pct resize`
+  where the storage supports it (fails with an error otherwise).
 
 **--force**
 : Skip confirmation prompts.
+
+**-y, --yes**
+: Same as `--force` (non-interactive).
 
 **-n, --dry-run**
 : Preview the expansion plan without making changes.

@@ -263,9 +263,9 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm --dry-run
 which lxc-to-vm vm-to-lxc shrink-lxc expand-lxc shrink-vm expand-vm clone-replace-disk
 
 # Check versions
-lxc-to-vm --version         # Should show 6.0.6
+lxc-to-vm --version         # Should show 6.2.1
 vm-to-lxc --version         # Should show 1.0.0
-shrink-lxc --version        # Should show 6.0.6
+shrink-lxc --version        # Should show 6.2.1
 expand-lxc --version        # Should show 6.0.0
 shrink-vm --version         # Should show 6.1.0
 expand-vm --version         # Should show 6.1.0

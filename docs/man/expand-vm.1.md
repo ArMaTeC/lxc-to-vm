@@ -5,7 +5,7 @@
      License: MIT
      ============================================================================== -->
 <!-- markdownlint-disable MD041 -->
-% EXPAND-VM(1) lxc-to-vm 6.0.6
+% EXPAND-VM(1) lxc-to-vm 6.2.1
 
 # NAME
 
@@ -33,6 +33,20 @@ supports Linux and Windows guests and multiple storage backends.
 
 **-n, --dry-run**
 : Preview actions without making changes.
+
+**--hot-expand**
+: Attempt an online resize while the VM stays running. Uses `qm resize`,
+  which resizes the volume, updates the VM config, and notifies the guest.
+  Filesystem growth inside the guest is left to the user.
+
+**--no-restart**
+: Keep the VM stopped after an offline expansion.
+
+**--force**, **-y, --yes**
+: Skip confirmation prompts (non-interactive).
+
+**--os-type** *TYPE*
+: Override OS detection (`linux`, `windows`).
 
 **-h, --help**
 : Show help and exit.

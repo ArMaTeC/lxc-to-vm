@@ -186,9 +186,10 @@ OPTIONS:
   -n, --dry-run          Show what would be done without making changes
   --safety-margin <GB>   GB to reserve when using --max (default: ${POOL_SAFETY_MARGIN_GB})
   --safety-percent <N>   Percent to reserve when using --max (default: ${POOL_SAFETY_MARGIN_PCT})
-  --hot-expand           Attempt online expansion (VM stays running)
+  --hot-expand           Online expansion via 'qm resize' (VM stays running)
   --no-restart           Keep VM stopped after expansion (if it was stopped)
   --force                Skip confirmation prompts
+  -y, --yes              Same as --force (non-interactive)
   --os-type <TYPE>       Override OS detection (linux, windows)
   -h, --help             Show this help message
   -V, --version          Show version
@@ -220,13 +221,6 @@ Safety Notes:
 USAGE
     exit 0
 }
-
-if [[ "$EUID" -ne 0 ]]; then
-    die "This script must be run as root (try: sudo $0)"
-fi
-
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "--- expand-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
 # SHARED LIBRARIES
@@ -265,13 +259,20 @@ while [[ $# -gt 0 ]]; do
         --hot-expand)     HOT_EXPAND=true; shift ;;
         --no-restart)     NO_RESTART=true; shift ;;
         -n|--dry-run)     DRY_RUN=true; shift ;;
-        --force)          FORCE=true; shift ;;
+        --force|-y|--yes) FORCE=true; shift ;;
         --os-type)        OS_TYPE_OVERRIDE="$2"; shift 2 ;;
         -h|--help)        usage ;;
         -V|--version)     echo "v${VERSION}"; exit 0 ;;
         *)                die "Unknown option: $1 (use --help)" ;;
     esac
 done
+
+if [[ "$EUID" -ne 0 ]]; then
+    die "This script must be run as root (try: sudo $0)"
+fi
+
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "--- expand-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 e "${BOLD}========================================${NC}"
 e "${BOLD}     PROXMOX VM DISK EXPANDER v${VERSION}${NC}"
@@ -366,7 +367,7 @@ get_pool_free_space() {
     case "$STORAGE_TYPE" in
         lvmthin|lvm)
             local vg_name
-            vg_name=$(pvesm path "$DISK_REF" 2>/dev/null | cut -d'/' -f3)
+            vg_name=$(lvm_vg_from_path "$DISK_PATH" 2>/dev/null) || vg_name=""
             if [[ -n "$vg_name" ]]; then
                 local free_mb
                 free_mb=$(vgs --noheadings --units m -o vg_free "$vg_name" 2>/dev/null | awk '{print $1}' | sed 's/m//i' | cut -d'.' -f1)
@@ -396,7 +397,7 @@ get_pool_total_size() {
     case "$STORAGE_TYPE" in
         lvmthin|lvm)
             local vg_name
-            vg_name=$(pvesm path "$DISK_REF" 2>/dev/null | cut -d'/' -f3)
+            vg_name=$(lvm_vg_from_path "$DISK_PATH" 2>/dev/null) || vg_name=""
             if [[ -n "$vg_name" ]]; then
                 local total_mb
                 total_mb=$(vgs --noheadings --units m -o vg_size "$vg_name" 2>/dev/null | awk '{print $1}' | sed 's/m//i' | cut -d'.' -f1)
@@ -535,80 +536,72 @@ fi
 # Stop VM if not hot-expanding
 if ! $HOT_EXPAND && $VM_WAS_RUNNING; then
     log "Stopping VM $VMID..."
-    qm stop "$VMID"
-    sleep 3
+    stop_guest_gracefully vm "$VMID" 60
 fi
 
+HOT_RESIZED=false
+if $HOT_EXPAND && $VM_WAS_RUNNING; then
+    # Native online resize: resizes the volume, updates the VM config,
+    # and notifies the guest — no per-storage manual ops required.
+    log "Hot-expanding disk via 'qm resize'..."
+    if ! qm resize "$VMID" "$DISK_NAME" "${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE"; then
+        die "Online resize failed. Retry without --hot-expand for an offline resize."
+    fi
+    ok "Disk resized online."
+    HOT_RESIZED=true
+else
 case "$STORAGE_TYPE" in
     lvmthin|lvm)
         log "Expanding LVM volume..."
         if [[ -L "$DISK_PATH" ]] || lvdisplay "$DISK_PATH" &>/dev/null; then
             LV_PATH="$DISK_PATH"
-            
+
             log "Expanding LV to ${NEW_SIZE_GB}GB..."
             if ! lvresize -y -L "${NEW_SIZE_GB}G" "$LV_PATH" 2>&1 | tee -a "$LOG_FILE"; then
                 die "LV expansion failed. Check VG free space."
             fi
             ok "LV expanded."
-            
-            # For hot-expand, trigger block_resize via QEMU monitor
-            if $HOT_EXPAND; then
-                log "Notifying VM of disk resize..."
-                qm monitor "$VMID" <<< "block_resize virtio0 ${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE" || warn "Block resize notification failed."
-            fi
+        else
+            die "Could not identify an LVM volume at $DISK_PATH."
         fi
         ;;
-    
+
     dir|nfs|cifs|glusterfs)
         log "Expanding disk image..."
-        
+
         if [[ "$IMG_FORMAT" == "qcow2" ]]; then
             log "Expanding QCOW2 image..."
             if ! qemu-img resize -f qcow2 "$DISK_PATH" "${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE"; then
                 die "QCOW2 expansion failed."
             fi
             ok "QCOW2 expanded."
-            
-            if $HOT_EXPAND; then
-                log "Notifying VM of disk resize..."
-                qm monitor "$VMID" <<< "block_resize virtio0 ${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE" || warn "Block resize notification failed."
-            fi
-            
+
         elif [[ "$IMG_FORMAT" == "raw" ]]; then
             log "Expanding raw image..."
             if ! qemu-img resize -f raw "$DISK_PATH" "${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE"; then
                 die "Raw image expansion failed."
             fi
             ok "Raw image expanded."
-            
-            if $HOT_EXPAND; then
-                log "Notifying VM of disk resize..."
-                qm monitor "$VMID" <<< "block_resize virtio0 ${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE" || warn "Block resize notification failed."
-            fi
         fi
         ;;
-    
+
     zfspool)
         log "Expanding ZFS volume..."
         ZFS_DATASET="${DISK_PATH#/dev/zvol/}"
         [[ -n "$ZFS_DATASET" ]] || die "Could not determine ZFS dataset"
-        
+
         log "Expanding ZFS volume to ${NEW_SIZE_GB}GB..."
         if ! zfs set volsize="${NEW_SIZE_GB}G" "$ZFS_DATASET" 2>&1 | tee -a "$LOG_FILE"; then
             die "ZFS expansion failed."
         fi
         ok "ZFS volume expanded."
-        
-        if $HOT_EXPAND; then
-            log "Notifying VM of disk resize..."
-            qm monitor "$VMID" <<< "block_resize virtio0 ${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE" || warn "Block resize notification failed."
-        fi
         ;;
-    
+
     *)
         die "Unsupported storage type: $STORAGE_TYPE"
         ;;
 esac
+fi
 
 # ------------------------------------------------------------------------------
 # Windows filesystem expansion (offline only)
@@ -629,10 +622,12 @@ if [[ "$OS_TYPE" == "windows" ]] && ! $HOT_EXPAND; then
     fi
 fi
 
-# Update VM config
-log "Updating VM configuration..."
-qm set "$VMID" --${DISK_NAME} "${DISK_REF},size=${NEW_SIZE_GB}G"
-ok "VM configuration updated."
+# Update VM config (qm resize already did this on the hot path)
+if ! $HOT_RESIZED; then
+    log "Updating VM configuration..."
+    qm set "$VMID" --${DISK_NAME} "${DISK_REF},size=${NEW_SIZE_GB}G"
+    ok "VM configuration updated."
+fi
 
 # ==============================================================================
 # RESTART & SUMMARY

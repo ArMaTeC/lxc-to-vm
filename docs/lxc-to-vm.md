@@ -112,6 +112,7 @@ sudo ./lxc-to-vm.sh -c 100 -v 200 -s local-lvm --shrink --start
 | | `--api-user` | Proxmox API user | `root@pam` |
 | | `--validate-only` | Run pre-flight checks only | — |
 | | `--skip-checks` | Skip ID-collision and free-space pre-checks | — |
+| `-y` | `--yes` | Auto-accept confirmation prompts (non-interactive; overwrites existing target IDs without asking) | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -330,8 +331,8 @@ sudo ./lxc-to-vm.sh --wizard
 
 | Code | Name | Description |
 | ---- | ---- | ----------- |
-| `0` | `E_SUCCESS` | ✅ Conversion successful |
-| `1` | `E_INVALID_ARG` | ❌ Invalid arguments provided |
+| `0` | `E_SUCCESS` | ✅ Conversion successful (batch modes: all items succeeded) |
+| `1` | `E_INVALID_ARG` | ❌ Invalid arguments provided (batch modes: one or more items failed) |
 | `2` | `E_NOT_FOUND` | ❌ Container/storage not found |
 | `3` | `E_DISK_FULL` | ❌ Insufficient disk space |
 | `4` | `E_PERMISSION` | ❌ Permission denied |

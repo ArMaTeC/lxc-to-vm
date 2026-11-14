@@ -179,6 +179,7 @@ Options:
   --migrate-to-local     Auto-migrate VM to local node if on remote
   --predict-size         Use predictive advisor for disk size
   --skip-checks          Skip ID-collision and storage free-space pre-checks
+  -y, --yes              Answer yes to all confirmation prompts (non-interactive)
   --no-auto-fix          Disable automatic remediation on health check failures
   -h, --help             Show this help message
   -V, --version          Show version
@@ -202,15 +203,6 @@ Examples:
 USAGE
     exit 0
 }
-
-# --- Root check ---
-if [[ "$EUID" -ne 0 ]]; then
-    die "This script must be run as root (try: sudo $0)"
-fi
-
-# --- Initialise log ---
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "--- vm-to-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
 ### Function: ensure_dependency
 # Verify a command is available, installing its package via apt if missing.
@@ -310,7 +302,7 @@ migrate_vm_to_local() {
     if $MIGRATE_TO_LOCAL; then
         $DRY_RUN && { log "[DRY-RUN] Would migrate VM $vmid to $local_node"; return 0; }
         local status; status=$(qm status "$vmid" 2>/dev/null | awk '{print $2}')
-        [[ "$status" == "running" ]] && { log "Stopping VM $vmid..."; qm stop "$vmid"; sleep 2; }
+        [[ "$status" == "running" ]] && { log "Stopping VM $vmid..."; stop_guest_gracefully vm "$vmid" 60; }
         qm migrate "$vmid" "$local_node" && { ok "VM $vmid migrated to $local_node"; sleep 3; return 0; }
         die "Migration failed. VM $vmid is still on $target_node"
     else
@@ -564,6 +556,7 @@ process_batch_file() {
     done < "$batch_file"
     echo ""; e "${GREEN}${BOLD}  BATCH CONVERSION COMPLETE${NC}"
     e "  ${BOLD}Successful:${NC} $success_count  ${BOLD}Failed:${NC} $fail_count  ${BOLD}Total:${NC} $((success_count + fail_count))"
+    [[ "$fail_count" -eq 0 ]] || exit 1
     exit 0
 }
 
@@ -588,6 +581,7 @@ process_range() {
     done
     echo ""; e "${GREEN}${BOLD}  RANGE CONVERSION COMPLETE${NC}"
     e "  ${BOLD}Successful:${NC} $success_count  ${BOLD}Failed:${NC} $fail_count  ${BOLD}Total:${NC} $((success_count + fail_count))"
+    [[ "$fail_count" -eq 0 ]] || exit 1
     exit 0
 }
 
@@ -627,7 +621,7 @@ run_single_conversion() {
         remove_snapshot "$VMID"
         if $DESTROY_SOURCE; then
             log "Destroying original VM $VMID..."
-            qm stop "$VMID" >> "$LOG_FILE" 2>&1 || true; sleep 2
+            stop_guest_gracefully vm "$VMID" 60
             qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >> "$LOG_FILE" 2>&1 \
                 && ok "Source VM $VMID destroyed." || warn "Failed to destroy VM $VMID"
         fi
@@ -649,7 +643,7 @@ BATCH_FILE="" RANGE_SPEC="" PROFILE_NAME="" SAVE_PROFILE_NAME=""
 WIZARD_MODE=false PARALLEL_JOBS=1 VALIDATE_ONLY=false
 UNPRIVILEGED=false CT_PASSWORD=""
 API_HOST="" API_TOKEN="" API_USER="root@pam" MIGRATE_TO_LOCAL=false PREDICT_SIZE=false
-AUTO_FIX=true SKIP_CHECKS=false CLEANUP_EXISTING_CT=false
+AUTO_FIX=true SKIP_CHECKS=false CLEANUP_EXISTING_CT=false ASSUME_YES=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -664,6 +658,7 @@ while [[ $# -gt 0 ]]; do
         -S|--start)      AUTO_START=true;   shift ;;
         --no-auto-fix)   AUTO_FIX=false;    shift ;;
         --skip-checks)   SKIP_CHECKS=true;  shift ;;
+        -y|--yes)        ASSUME_YES=true;   shift ;;
         --snapshot)      CREATE_SNAPSHOT=true; shift ;;
         --rollback-on-failure) ROLLBACK_ON_FAILURE=true; shift ;;
         --destroy-source) DESTROY_SOURCE=true; shift ;;
@@ -690,32 +685,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ==============================================================================
-# 1.5. PROFILE & BATCH MODE HANDLING
-# ==============================================================================
-
-[[ -n "$PROFILE_NAME" ]] && load_profile "$PROFILE_NAME"
-
-if $VALIDATE_ONLY; then
-    [[ -n "$VMID" ]] || die "VM ID required for validation."
-    run_preflight_validation "$VMID"; exit $?
+# --- Root check ---
+# All Proxmox operations require root; parsed arguments first so
+# --help/--version work unprivileged.
+if [[ "$EUID" -ne 0 ]]; then
+    die "This script must be run as root (try: sudo $0)"
 fi
 
-$WIZARD_MODE && run_wizard
-
-[[ -n "$BATCH_FILE" ]] && [[ "$PARALLEL_JOBS" -gt 1 ]] && { process_batch_parallel "$BATCH_FILE" "$PARALLEL_JOBS"; exit 0; }
-[[ -n "$BATCH_FILE" ]] && process_batch_file "$BATCH_FILE"
-[[ -n "$RANGE_SPEC" ]] && process_range "$RANGE_SPEC"
-
-if [[ -n "$SAVE_PROFILE_NAME" ]]; then
-    save_profile "$SAVE_PROFILE_NAME"
-    [[ -z "$VMID" || -z "$CTID" ]] && exit 0
-fi
-
-if $RESUME_MODE; then
-    [[ -z "$VMID" || -z "$CTID" ]] && die "Resume mode requires --vmid and --ctid."
-    check_resume_state "$VMID" "$CTID" || die "No resume state found for VM $VMID → CT $CTID."
-fi
+# --- Initialise log ---
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "--- vm-to-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
 # TUI / WIZARD MODE
@@ -752,7 +731,7 @@ run_wizard() {
     echo ""; e "${BOLD}========================================${NC}"; e "${BOLD}Conversion Summary:${NC}"
     e "  Source VM: ${GREEN}$VMID${NC}  Target CT: ${GREEN}$CTID${NC}  Storage: ${GREEN}$STORAGE${NC}"
     e "${BOLD}========================================${NC}"; echo ""
-    read -rp "Proceed? [Y/n]: " confirm; [[ -n "$confirm" && ! "$confirm" =~ ^[Yy] ]] && die "Cancelled by user"
+    $ASSUME_YES || { read -rp "Proceed? [Y/n]: " confirm; [[ -n "$confirm" && ! "$confirm" =~ ^[Yy] ]] && die "Cancelled by user"; }
 }
 
 run_preflight_validation() {
@@ -786,17 +765,61 @@ process_batch_parallel() {
         [[ "$line" =~ ^[[:space:]]*# ]] && continue; [[ -z "${line// /}" ]] && continue; jobs+=("$line")
     done < "$batch_file"
     local total=${#jobs[@]} running=0 completed=0
+    local results_file
+    results_file=$(mktemp /tmp/vm-to-lxc-results.XXXXXX)
     for job in "${jobs[@]}"; do
         local bv
         bv=$(echo "$job" | awk '{print $1}')
         local bc
         bc=$(echo "$job" | awk '{print $2}')
         while [[ $running -ge $max_jobs ]]; do sleep 1; running=$(jobs -r | wc -l); done
-        ( run_single_conversion "$bv" "$bc" >> "$LOG_FILE" 2>&1 ) &
+        (
+            if run_single_conversion "$bv" "$bc" >> "$LOG_FILE" 2>&1; then
+                echo "SUCCESS:$bv:$bc" >> "$results_file"
+            else
+                echo "FAILED:$bv:$bc" >> "$results_file"
+            fi
+        ) &
         ((running++)); ((completed++))
     done; wait
-    echo ""; e "${GREEN}${BOLD}  PARALLEL BATCH COMPLETE (${total} items)${NC}"
+    local success_count fail_count
+    success_count=$(grep -c '^SUCCESS:' "$results_file" 2>/dev/null || echo 0)
+    fail_count=$(grep -c '^FAILED:' "$results_file" 2>/dev/null || echo 0)
+    grep '^FAILED:' "$results_file" 2>/dev/null | sed 's/^FAILED:/  FAILED: VM /; s/:/ → CT /' >&2 || true
+    rm -f "$results_file"
+    echo ""; e "${GREEN}${BOLD}  PARALLEL BATCH COMPLETE${NC}"
+    e "  ${BOLD}Successful:${NC} $success_count  ${BOLD}Failed:${NC} $fail_count  ${BOLD}Total:${NC} $total"
+    [[ "$fail_count" -eq 0 ]] || exit 1
+    exit 0
 }
+
+# ==============================================================================
+# 1.5. PROFILE & BATCH MODE HANDLING
+# (Dispatched here so all functions invoked below are defined first.)
+# ==============================================================================
+
+[[ -n "$PROFILE_NAME" ]] && load_profile "$PROFILE_NAME"
+
+if $VALIDATE_ONLY; then
+    [[ -n "$VMID" ]] || die "VM ID required for validation."
+    run_preflight_validation "$VMID"; exit $?
+fi
+
+$WIZARD_MODE && run_wizard
+
+[[ -n "$BATCH_FILE" ]] && [[ "$PARALLEL_JOBS" -gt 1 ]] && process_batch_parallel "$BATCH_FILE" "$PARALLEL_JOBS"
+[[ -n "$BATCH_FILE" ]] && process_batch_file "$BATCH_FILE"
+[[ -n "$RANGE_SPEC" ]] && process_range "$RANGE_SPEC"
+
+if [[ -n "$SAVE_PROFILE_NAME" ]]; then
+    save_profile "$SAVE_PROFILE_NAME"
+    [[ -z "$VMID" || -z "$CTID" ]] && exit 0
+fi
+
+if $RESUME_MODE; then
+    [[ -z "$VMID" || -z "$CTID" ]] && die "Resume mode requires --vmid and --ctid."
+    check_resume_state "$VMID" "$CTID" || die "No resume state found for VM $VMID → CT $CTID."
+fi
 
 # ==============================================================================
 # 2. SETUP & CHECKS
@@ -811,9 +834,13 @@ ensure_dependency kpartx
 ensure_dependency losetup util-linux
 ensure_dependency qemu-img qemu-utils
 
-[[ -z "$VMID" ]]    && read -rp "Enter Source VM ID (e.g., 200): " VMID
-[[ -z "$CTID" ]]    && read -rp "Enter New Container ID (e.g., 100): " CTID
-[[ -z "$STORAGE" ]] && read -rp "Enter Target Storage Name (e.g., local-lvm): " STORAGE
+# Interactive prompts for missing arguments (skipped under --yes;
+# missing values fail the validation below instead)
+if ! $ASSUME_YES; then
+    [[ -z "$VMID" ]]    && read -rp "Enter Source VM ID (e.g., 200): " VMID
+    [[ -z "$CTID" ]]    && read -rp "Enter New Container ID (e.g., 100): " CTID
+    [[ -z "$STORAGE" ]] && read -rp "Enter Target Storage Name (e.g., local-lvm): " STORAGE
+fi
 
 [[ "$VMID" =~ ^[0-9]+$ ]] || die "VM ID must be a positive integer, got: '$VMID'"
 [[ "$CTID" =~ ^[0-9]+$ ]] || die "Container ID must be a positive integer, got: '$CTID'"
@@ -834,7 +861,7 @@ STORAGE_STATUS=$(pvesm status 2>/dev/null | awk -v s="$STORAGE" 'NR>1 && $1==s{p
 
 VM_STATUS=$(qm status "$VMID" 2>/dev/null | awk '{print $2}')
 if [[ "$VM_STATUS" == "running" ]]; then
-    $DRY_RUN && warn "VM $VMID is running. Would stop it." || { warn "VM $VMID is running. Stopping..."; qm stop "$VMID"; sleep 3; }
+    $DRY_RUN && warn "VM $VMID is running. Would stop it." || { warn "VM $VMID is running. Stopping..."; stop_guest_gracefully vm "$VMID" 60; }
 fi
 
 if $DRY_RUN; then
@@ -875,7 +902,7 @@ pick_work_dir() {
         [[ "$avail" -ge "$required_mb" ]] && { cmp+=("$mp"); cav+=("$avail"); }
     done < <(df -BM --output=avail,target 2>/dev/null | tail -n +2)
     [[ ${#cmp[@]} -eq 0 ]] && die "No mount point with enough space (${required_mb}MB)."
-    [[ ${#cmp[@]} -eq 1 ]] && { mkdir -p "${cmp[0]}"; echo "${cmp[0]}"; return 0; }
+    { [[ ${#cmp[@]} -eq 1 ]] || $ASSUME_YES; } && { mkdir -p "${cmp[0]}"; echo "${cmp[0]}"; return 0; }
     echo "" >&2; e "${BOLD}Available mount points:${NC}" >&2
     for i in "${!cmp[@]}"; do e "  ${GREEN}[$((i+1))]${NC} ${cmp[$i]} — ${cav[$i]}MB free" >&2; done
     echo "" >&2; local choice; read -rp "Select [1-${#cmp[@]}] or custom path: " choice
@@ -1281,7 +1308,7 @@ if [[ -n "$VMID" && -n "$CTID" ]]; then
         remove_snapshot "$VMID"
         if $DESTROY_SOURCE; then
             log "Destroying original VM $VMID..."
-            qm stop "$VMID" >> "$LOG_FILE" 2>&1 || true; sleep 2
+            stop_guest_gracefully vm "$VMID" 60
             qm destroy "$VMID" --destroy-unreferenced-disks 1 --purge 1 >> "$LOG_FILE" 2>&1 \
                 && ok "Source VM $VMID destroyed." || warn "Failed to destroy VM $VMID"
         fi

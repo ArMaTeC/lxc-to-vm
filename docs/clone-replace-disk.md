@@ -62,6 +62,7 @@ sudo ./clone-replace-disk.sh -t lxc -i 100 --size 200 --dry-run
 | | `--keep-old` | Explicitly keep old disk (default behavior) | On |
 | `-n` | `--dry-run` | Show what would be done without changes | — |
 | | `--force` | Skip confirmation prompts | — |
+| `-y` | `--yes` | Same as `--force` (non-interactive) | — |
 | | `--skip-checks` | Skip target-storage free-space pre-check | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |

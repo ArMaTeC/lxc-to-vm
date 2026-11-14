@@ -5,7 +5,7 @@
      License: MIT
      ============================================================================== -->
 <!-- markdownlint-disable MD041 -->
-% VM-TO-LXC(1) lxc-to-vm 6.0.6
+% VM-TO-LXC(1) lxc-to-vm 6.2.1
 
 # NAME
 
@@ -84,6 +84,12 @@ Most options mirror `lxc-to-vm.sh`. Key options:
 
 **--migrate-to-local**
 : Auto-migrate the VM to the local node before converting.
+
+**-y, --yes**
+: Non-interactive mode: auto-accept confirmation prompts, including the
+  target-ID collision check (existing guests are overwritten). Missing
+  required values fail validation instead of prompting. Batch and range
+  modes exit non-zero if any item fails.
 
 **-h, --help**
 : Show help and exit.

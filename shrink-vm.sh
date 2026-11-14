@@ -199,6 +199,9 @@ Options:
   -y, --yes              Non-interactive: auto-accept confirmations.
                          Issues requiring attention are still reported and
                          abort that VM (batch continues with the next ID).
+  -t, --temp-dir <PATH>  Directory for temporary raw images during
+                         qcow2/libguestfs shrinks (default: ${TMPDIR:-/var/tmp}).
+                         Needs free space >= the disk's virtual size.
   -h, --help             Show this help message
   -V, --version          Show version
 
@@ -229,13 +232,6 @@ USAGE
     exit 0
 }
 
-if [[ "$EUID" -ne 0 ]]; then
-    die "This script must be run as root (try: sudo $0)"
-fi
-
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "--- shrink-vm run: $(date -Is) ---" >> "$LOG_FILE"
-
 # ==============================================================================
 # SHARED LIBRARIES
 # ==============================================================================
@@ -255,6 +251,7 @@ DRY_RUN=false
 USE_LIBGUESTFS=false
 SKIP_FS_CHECK=false
 AUTO_YES=false
+TEMP_DIR="${TMPDIR:-/var/tmp}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -274,12 +271,22 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || die "Option $1 requires an argument"
             OS_TYPE_OVERRIDE="$2"; shift 2 ;;
         -y|--yes)        AUTO_YES=true; shift ;;
+        -t|--temp-dir)
+            [[ $# -ge 2 ]] || die "Option $1 requires an argument"
+            TEMP_DIR="$2"; shift 2 ;;
         -h|--help)       usage ;;
         -V|--version)    echo "v${VERSION}"; exit 0 ;;
         -*)              die "Unknown option: $1 (use --help)" ;;
         *)               VMIDS+=("$1"); shift ;;
     esac
 done
+
+if [[ "$EUID" -ne 0 ]]; then
+    die "This script must be run as root (try: sudo $0)"
+fi
+
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "--- shrink-vm run: $(date -Is) ---" >> "$LOG_FILE"
 
 e "${BOLD}========================================${NC}"
 e "${BOLD}     PROXMOX VM DISK SHRINKER v${VERSION}${NC}"
@@ -317,6 +324,9 @@ for _cmd in "${REQUIRED_CMDS[@]}"; do
     command -v "$_cmd" &>/dev/null || die "Required command not found: $_cmd"
 done
 
+mkdir -p "$TEMP_DIR" 2>/dev/null || die "Cannot create temp directory: $TEMP_DIR"
+[[ -w "$TEMP_DIR" ]] || die "Temp directory is not writable: $TEMP_DIR"
+
 # ==============================================================================
 # BATCH MODE — process each VM via a fresh single-ID run so a failure on one
 # VM (hands-on issue) doesn't abort the rest of the batch.
@@ -329,6 +339,7 @@ if [[ ${#VMIDS[@]} -gt 1 ]]; then
     $FORCE          && CHILD_ARGS+=(--force)
     [[ -n "$OS_TYPE_OVERRIDE" ]] && CHILD_ARGS+=(--os-type "$OS_TYPE_OVERRIDE")
     $AUTO_YES       && CHILD_ARGS+=(--yes)
+    CHILD_ARGS+=(--temp-dir "$TEMP_DIR")
 
     log "Batch mode: shrinking ${#VMIDS[@]} VMs (${VMIDS[*]})"
 
@@ -420,8 +431,7 @@ if [[ "$VM_STATUS" == "running" ]]; then
         warn "VM $VMID is running. Would stop it."
     else
         warn "VM $VMID is running. Stopping..."
-        qm stop "$VMID"
-        sleep 3
+        stop_guest_gracefully vm "$VMID" 60
     fi
 fi
 
@@ -614,23 +624,26 @@ else
     # Use libguestfs if requested (most reliable for qcow2)
     if $USE_LIBGUESTFS && command -v virt-resize &>/dev/null; then
         log "Using libguestfs virt-resize..."
-        
-        TEMP_RAW="/tmp/vm-${VMID}-shrink.raw"
-        trap "rm -f '$TEMP_RAW' 2>/dev/null || true" EXIT
-        
+
+        TEMP_RAW=$(mktemp "${TEMP_DIR}/vm-${VMID}-shrink.XXXXXX")
+        # virt-resize requires the output file not to exist — reserve a
+        # unique name without creating it.
+        NEW_RAW=$(mktemp -u "${TEMP_DIR}/vm-${VMID}-new.XXXXXX")
+        trap "rm -f '$TEMP_RAW' '$NEW_RAW' 2>/dev/null || true" EXIT
+
         # Convert to raw
         log "Converting to temporary raw image..."
         qemu-img convert -f "$IMG_FORMAT" -O raw "$DISK_PATH" "$TEMP_RAW"
-        
+
         # Shrink using virt-resize
         log "Shrinking with virt-resize..."
-        if ! virt-resize --shrink /dev/sda1 --output /tmp/vm-${VMID}-new.raw "$TEMP_RAW" 2>&1 | tee -a "$LOG_FILE"; then
+        if ! virt-resize --shrink /dev/sda1 --output "$NEW_RAW" "$TEMP_RAW" 2>&1 | tee -a "$LOG_FILE"; then
             warn "virt-resize failed. Trying standard method..."
         else
             # Convert back
             log "Converting back to $IMG_FORMAT..."
-            qemu-img convert -f raw -O "$IMG_FORMAT" /tmp/vm-${VMID}-new.raw "$DISK_PATH"
-            rm -f /tmp/vm-${VMID}-new.raw "$TEMP_RAW"
+            qemu-img convert -f raw -O "$IMG_FORMAT" "$NEW_RAW" "$DISK_PATH"
+            rm -f "$NEW_RAW" "$TEMP_RAW"
             trap - EXIT
             ok "Shrink complete via libguestfs."
             SHRINK_DONE=true
@@ -677,7 +690,7 @@ case "$STORAGE_TYPE" in
         
         if [[ "$IMG_FORMAT" == "qcow2" ]]; then
             # QCOW2 shrink: convert to raw, shrink, convert back
-            TEMP_RAW="/tmp/vm-${VMID}-shrink.raw"
+            TEMP_RAW=$(mktemp "${TEMP_DIR}/vm-${VMID}-shrink.XXXXXX")
             trap "rm -f '$TEMP_RAW' 2>/dev/null || true" EXIT
             
             log "Converting QCOW2 to raw..."

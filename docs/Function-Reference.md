@@ -32,6 +32,56 @@ appearance in the file.
 | **Outputs** | Error message to `stderr` if the library is missing. |
 | **Returns** | `0` on success; exits with `1` if the library file is not found. |
 
+#### `check_target_collision`
+
+| | |
+| --- | --- |
+| **Signature** | `check_target_collision <vm|ct> <target_id> [replace_flag]` |
+| **Purpose** | Guard against destroying an existing guest with the target ID. Prompts for confirmation unless a `replace-*` flag or `ASSUME_YES=true` (`--yes`) is set. |
+| **Returns** | `0` if it is safe to continue; exits `1` otherwise. |
+
+#### `check_target_space`
+
+| | |
+| --- | --- |
+| **Signature** | `check_target_space <storage> <size_gb> <label>` |
+| **Purpose** | Verify a target storage has enough free space for a new volume (LVM/ZFS/dir aware). |
+
+#### `get_first_storage_volid`
+
+| | |
+| --- | --- |
+| **Signature** | `get_first_storage_volid <storage>` |
+| **Purpose** | Find an existing volume ID on a storage, used to derive storage parameters. |
+
+#### `lvm_vg_from_path`
+
+| | |
+| --- | --- |
+| **Signature** | `lvm_vg_from_path <device_path>` |
+| **Purpose** | Derive the LVM volume-group name from `/dev/<vg>/<lv>`, `/dev/mapper/<vg>-<lv>` (device-mapper escaping), or `/dev/dm-*` paths. |
+
+#### `storage_cfg_value`
+
+| | |
+| --- | --- |
+| **Signature** | `storage_cfg_value <storage> <key>` |
+| **Purpose** | Read a parameter (`vgname`, `pool`, `path`, `thinpool`, ...) for a storage from `/etc/pve/storage.cfg`. |
+
+#### `storage_vg_name` / `storage_zfs_pool` / `storage_target_dir`
+
+| | |
+| --- | --- |
+| **Signature** | `storage_vg_name <storage>` · `storage_zfs_pool <storage>` · `storage_target_dir <storage> [guest_id]` |
+| **Purpose** | Deterministically resolve the LVM VG, ZFS pool/dataset, or directory path (`<path>/images/<id>`) backing a storage — storage.cfg first, existing volumes as fallback. |
+
+#### `stop_guest_gracefully`
+
+| | |
+| --- | --- |
+| **Signature** | `stop_guest_gracefully <vm|ct|lxc> <id> [timeout_s]` |
+| **Purpose** | Request a graceful shutdown (`qm shutdown`/`pct shutdown`), poll until stopped, and force a hard stop after the timeout (default 60s). |
+
 ---
 
 ### `lib/os-detect.sh`
@@ -62,11 +112,11 @@ Internal helper that parses `virt-inspector` XML output.
 
 #### `_detect_via_partition_types`
 
-Internal fallback heuristic based on `fdisk`/`parted` partition tables and `file` output.
+Internal fallback heuristic based on `fdisk`/`parted` partition tables and `file` output. Non-raw images (e.g. qcow2) are exposed read-only via `qemu-nbd` when available.
 
 | | |
 | --- | --- |
-| **Signature** | `_detect_via_partition_types <disk_path>` |
+| **Signature** | `_detect_via_partition_types <disk_path> [img_format]` |
 | **Purpose** | Detect OS details from partition table heuristics. |
 | **Globals set** | `OS_TYPE`, `OS_DISTRO`, `OS_BOOT_MODE`, `OS_PARTITION_TABLE`, `OS_HAS_ESP` |
 | **Returns** | `0` on success (may leave `OS_TYPE` as `unknown`); `1` if `fdisk`/`parted` unavailable. |

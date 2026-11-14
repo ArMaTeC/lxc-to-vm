@@ -103,6 +103,7 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm \
 | | `--no-auto-fix` | Disable auto-remediation | — |
 | | `--validate-only` | Run pre-flight checks only | — |
 | | `--skip-checks` | Skip ID-collision and free-space pre-checks | — |
+| `-y` | `--yes` | Auto-accept confirmation prompts (non-interactive; overwrites existing target IDs without asking) | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -328,8 +329,8 @@ sudo ./vm-to-lxc.sh --wizard
 
 | Code | Name | Description |
 | ---- | ---- | ----------- |
-| `0` | `E_SUCCESS` | ✅ Success |
-| `1` | `E_INVALID_ARG` | ❌ Invalid arguments |
+| `0` | `E_SUCCESS` | ✅ Success (batch modes: all items succeeded) |
+| `1` | `E_INVALID_ARG` | ❌ Invalid arguments (batch modes: one or more items failed) |
 | `2` | `E_NOT_FOUND` | ❌ VM/container/storage not found |
 | `3` | `E_DISK_FULL` | ❌ Disk space issue |
 | `4` | `E_PERMISSION` | ❌ Permission denied |

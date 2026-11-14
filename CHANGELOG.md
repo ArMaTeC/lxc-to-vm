@@ -27,8 +27,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Declining the confirmation prompt now exits `E_ABORT` (10) instead of `0`
     so batch mode can distinguish user-skipped items from successes
   - Declared `REQUIRED_CMDS` are now actually verified before starting
+- **`-y`/`--yes` non-interactive mode** (`lxc-to-vm.sh`, `vm-to-lxc.sh`)
+  - Auto-accepts all confirmation prompts, including the target-ID
+    collision check (existing guests are overwritten without asking)
+  - Missing required values fail validation instead of prompting;
+    the workspace mount-point menu auto-selects the largest candidate
+- **`-y`/`--yes` alias** for `--force` (`expand-vm.sh`, `expand-lxc.sh`,
+  `clone-replace-disk.sh`)
+- **`-t`/`--temp-dir`** (`shrink-vm.sh`): temporary raw images now use
+  `mktemp` under a configurable directory (default `/var/tmp`) instead of
+  fixed `/tmp` paths
+- **`lib/common.sh` shared helpers**: `stop_guest_gracefully`
+  (shutdown + poll, hard-stop fallback), `lvm_vg_from_path`
+  (mapper/dm-* aware), `storage_cfg_value`, `storage_vg_name`,
+  `storage_zfs_pool`, `storage_target_dir`
+- **`os-detect.sh`**: non-raw disk images (qcow2) are now exposed
+  read-only via `qemu-nbd` so the partition-table fallback works on them
 
 ### Fixed
+
+- **Security**: removed a hardcoded plaintext credential from
+  `docs/test-remote-pve.md` (all history) and `test-remote-pve.sh`;
+  the tester now uses `PVE_PASS` env or SSH keys
+- **`expand-vm.sh` hot-expand**: replaced per-storage `block_resize`
+  monitor calls (hardcoded `virtio0`) with native `qm resize`, which
+  resizes the volume, updates the config, and notifies the guest;
+  an unresolvable LVM path now fails instead of silently succeeding
+- **`expand-lxc.sh` `--no-restart`**: online resize now goes through
+  `pct resize` instead of resizing the underlying volume/filesystem
+  underneath the running container; unsupported storage fails cleanly
+  instead of restarting the container. Dry-run step numbering fixed
+- **`lxc-to-vm.sh`**: `--batch` without `--parallel` now actually runs
+  the sequential batch path (it previously fell through and died)
+- **`vm-to-lxc.sh`**: `--parallel`, `--wizard`, and `--validate-only`
+  were dispatched before their functions were defined and always failed;
+  dispatch now happens after definitions
+- **Batch/range/parallel modes** (`lxc-to-vm.sh`, `vm-to-lxc.sh`) exit
+  non-zero when any item fails, and parallel mode reports per-item results
+- **`clone-replace-disk.sh`**: target VG/pool/dir now resolved
+  deterministically from `/etc/pve/storage.cfg` (was `pvesm path` on a
+  not-yet-existing volume plus a first-VG fallback that could pick the
+  wrong VG); dir-storage clones go to `images/<id>/` with correct volids;
+  `lvmthin` targets create thin volumes; `--skip-checks` is honored;
+  VM disk swap uses a single atomic `qm set`
+- **Graceful stops**: `qm stop`/`pct stop` + fixed sleeps replaced with
+  `shutdown` + status polling and a timed hard-stop fallback across all
+  scripts
+- **`--help`/`--version`** no longer require root on any script
+- **`shrink-lxc.sh` dry-run**: mounts the container and measures with
+  `du -x` (excludes bind mounts/pseudo filesystems) instead of relying
+  on `pct df`; a mounted container is always unmounted afterwards
+- **`common.sh` `check_target_space`**: no longer resolves a storage
+  volid for storage types that never use it
+- **`test-remote-pve.sh`/`.ps1`**: now copy `lib/` to the remote host
+  (scripts source `lib/common.sh` for shared helpers)
+- **Docs**: man page versions bumped to 6.2.1; `--yes`, `--temp-dir`,
+  `pct resize`/`qm resize` semantics, and batch exit codes documented
 
 - **`shrink-vm.sh`**: a successful libguestfs (`-u`) shrink no longer falls
   through into the standard per-storage shrink path (previously shrank twice)

@@ -194,6 +194,7 @@ OPTIONS:
   --keep-old             Keep old disk attached as backup (default behavior)
   -n, --dry-run          Show what would be done without making changes
   --force                Skip confirmation prompts
+  -y, --yes              Same as --force (non-interactive)
   --skip-checks          Skip storage free-space pre-check
   --os-type <TYPE>       Override OS detection for VMs (linux, windows)
   -h, --help             Show this help message
@@ -222,13 +223,6 @@ Safety Notes:
 USAGE
     exit 0
 }
-
-if [[ "$EUID" -ne 0 ]]; then
-    die "This script must be run as root (try: sudo $0)"
-fi
-
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "--- clone-replace-disk run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
 # SHARED LIBRARIES
@@ -272,7 +266,7 @@ while [[ $# -gt 0 ]]; do
         --snapshot)      SNAPSHOT=true; shift ;;
         --keep-old)      KEEP_OLD=true; REMOVE_OLD=false; shift ;;
         -n|--dry-run)    DRY_RUN=true; shift ;;
-        --force)         FORCE=true; shift ;;
+        --force|-y|--yes) FORCE=true; shift ;;
         --skip-checks)   SKIP_CHECKS=true; shift ;;
         --os-type)       OS_TYPE_OVERRIDE="$2"; shift 2 ;;
         -h|--help)       usage ;;
@@ -280,6 +274,13 @@ while [[ $# -gt 0 ]]; do
         *)               die "Unknown option: $1 (use --help)" ;;
     esac
 done
+
+if [[ "$EUID" -ne 0 ]]; then
+    die "This script must be run as root (try: sudo $0)"
+fi
+
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "--- clone-replace-disk run: $(date -Is) ---" >> "$LOG_FILE"
 
 e "${BOLD}========================================${NC}"
 e "${BOLD}  DISK CLONE & REPLACE TOOL v${VERSION}${NC}"
@@ -407,7 +408,7 @@ TARGET_REF="${TARGET_STORAGE}:${TARGET_VOLUME}"
 log "Target: $TARGET_REF"
 log "Target size: ${TARGET_SIZE}GB"
 log "Target format: $TARGET_FORMAT"
-check_target_space "$TARGET_STORAGE" "$TARGET_SIZE" "clone disk"
+$SKIP_CHECKS || check_target_space "$TARGET_STORAGE" "$TARGET_SIZE" "clone disk"
 
 # ==============================================================================
 # CHECK STATUS
@@ -481,12 +482,7 @@ fi
 # ==============================================================================
 if $WAS_RUNNING; then
     log "Stopping $TYPE $ID..."
-    if [[ "$TYPE" == "lxc" ]]; then
-        pct stop "$ID"
-    else
-        qm stop "$ID"
-    fi
-    sleep 3
+    stop_guest_gracefully "$TYPE" "$ID" 60
 fi
 
 # ==============================================================================
@@ -499,6 +495,19 @@ log "Source: $SOURCE_PATH"
 TARGET_STORAGE_TYPE=$(pvesm status 2>/dev/null | awk -v s="$TARGET_STORAGE" '$1==s{print $2}')
 log "Target storage type: $TARGET_STORAGE_TYPE"
 
+# For directory-based storage, image volids live under images/<id>/ —
+# resolve the real directory and rebuild the volid accordingly.
+case "$TARGET_STORAGE_TYPE" in
+    dir|nfs|cifs|glusterfs)
+        TARGET_DIR=$(storage_target_dir "$TARGET_STORAGE" "$ID") \
+            || die "Could not determine target directory for $TARGET_STORAGE"
+        mkdir -p "$TARGET_DIR" || die "Cannot create directory: $TARGET_DIR"
+        TARGET_PATH="${TARGET_DIR}/${TARGET_VOLUME}"
+        [[ "$TARGET_FORMAT" == "qcow2" ]] && TARGET_PATH="${TARGET_PATH}.qcow2"
+        TARGET_REF="${TARGET_STORAGE}:${ID}/$(basename "$TARGET_PATH")"
+        ;;
+esac
+
 # ------------------------------------------------------------------------------
 # Windows VM: use libguestfs-aware clone path
 # ------------------------------------------------------------------------------
@@ -509,27 +518,23 @@ if [[ "$TYPE" == "vm" && "$OS_TYPE" == "windows" ]]; then
         # Determine target path/device
         case "$TARGET_STORAGE_TYPE" in
             lvmthin|lvm)
-                VG_NAME=$(pvesm path "$TARGET_REF" 2>/dev/null | cut -d'/' -f3 || vgs --noheadings -o vg_name | head -1 | tr -d ' ')
-                [[ -n "$VG_NAME" ]] || die "Could not determine VG name for $TARGET_STORAGE"
-                lvcreate -y -L "${TARGET_SIZE}G" -n "$TARGET_VOLUME" "$VG_NAME" >> "$LOG_FILE" 2>&1 || die "Failed to create LVM volume"
+                VG_NAME=$(storage_vg_name "$TARGET_STORAGE") || die "Could not determine VG name for $TARGET_STORAGE"
+                THIN_POOL=$(storage_cfg_value "$TARGET_STORAGE" thinpool 2>/dev/null || true)
+                if [[ "$TARGET_STORAGE_TYPE" == "lvmthin" && -n "$THIN_POOL" ]]; then
+                    lvcreate -y -V "${TARGET_SIZE}G" -T "${VG_NAME}/${THIN_POOL}" -n "$TARGET_VOLUME" >> "$LOG_FILE" 2>&1 || die "Failed to create LVM thin volume"
+                else
+                    lvcreate -y -L "${TARGET_SIZE}G" -n "$TARGET_VOLUME" "$VG_NAME" >> "$LOG_FILE" 2>&1 || die "Failed to create LVM volume"
+                fi
                 TARGET_DEVICE="/dev/${VG_NAME}/${TARGET_VOLUME}"
                 ;;
             zfspool)
-                # pvesm path returns /dev/zvol/<dataset>/<vol> — the target
-                # dataset is the parent of the volume name.
-                ZFS_POOL=$(pvesm path "$TARGET_REF" 2>/dev/null | sed 's|^/dev/zvol/||')
-                ZFS_POOL="${ZFS_POOL%/*}"
-                [[ -n "$ZFS_POOL" ]] || die "Could not determine ZFS pool"
+                ZFS_POOL=$(storage_zfs_pool "$TARGET_STORAGE") || die "Could not determine ZFS pool for $TARGET_STORAGE"
                 zfs create -V "${TARGET_SIZE}G" "${ZFS_POOL}/${TARGET_VOLUME}" >> "$LOG_FILE" 2>&1 || die "Failed to create ZFS volume"
                 TARGET_DEVICE="/dev/zvol/${ZFS_POOL}/${TARGET_VOLUME}"
                 ;;
             dir|nfs|cifs|glusterfs)
-                TARGET_DIR=$(pvesm path "$TARGET_STORAGE:dummy" 2>/dev/null | xargs dirname)
-                [[ -n "$TARGET_DIR" && -d "$TARGET_DIR" ]] || die "Could not determine target directory"
-                TARGET_DEVICE="${TARGET_DIR}/${TARGET_VOLUME}"
-                if [[ "$TARGET_FORMAT" == "qcow2" ]]; then
-                    TARGET_DEVICE="${TARGET_DEVICE}.qcow2"
-                fi
+                # TARGET_DIR/TARGET_PATH resolved earlier under images/<id>/
+                TARGET_DEVICE="$TARGET_PATH"
                 ;;
             *)
                 die "Unsupported target storage type: $TARGET_STORAGE_TYPE"
@@ -555,13 +560,17 @@ case "$TARGET_STORAGE_TYPE" in
     lvmthin|lvm)
         # For LVM, we need to create LV and then copy
         log "Creating LVM volume: $TARGET_VOLUME (${TARGET_SIZE}G)"
-        VG_NAME=$(pvesm path "$TARGET_REF" 2>/dev/null | cut -d'/' -f3 || vgs --noheadings -o vg_name | head -1 | tr -d ' ')
-        [[ -n "$VG_NAME" ]] || die "Could not determine VG name for $TARGET_STORAGE"
-        
+        VG_NAME=$(storage_vg_name "$TARGET_STORAGE") || die "Could not determine VG name for $TARGET_STORAGE"
+
         LV_PATH="/dev/${VG_NAME}/${TARGET_VOLUME}"
-        
-        # Create LV
-        if ! lvcreate -y -L "${TARGET_SIZE}G" -n "$TARGET_VOLUME" "$VG_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+
+        # Create LV (thin volume for lvmthin storage, thick otherwise)
+        THIN_POOL=$(storage_cfg_value "$TARGET_STORAGE" thinpool 2>/dev/null || true)
+        if [[ "$TARGET_STORAGE_TYPE" == "lvmthin" && -n "$THIN_POOL" ]]; then
+            if ! lvcreate -y -V "${TARGET_SIZE}G" -T "${VG_NAME}/${THIN_POOL}" -n "$TARGET_VOLUME" 2>&1 | tee -a "$LOG_FILE"; then
+                die "Failed to create LVM thin volume"
+            fi
+        elif ! lvcreate -y -L "${TARGET_SIZE}G" -n "$TARGET_VOLUME" "$VG_NAME" 2>&1 | tee -a "$LOG_FILE"; then
             die "Failed to create LVM volume"
         fi
         
@@ -583,11 +592,7 @@ case "$TARGET_STORAGE_TYPE" in
     
     zfspool)
         log "Creating ZFS volume..."
-        # pvesm path returns /dev/zvol/<dataset>/<vol> — the target
-        # dataset is the parent of the volume name.
-        ZFS_POOL=$(pvesm path "$TARGET_REF" 2>/dev/null | sed 's|^/dev/zvol/||')
-        ZFS_POOL="${ZFS_POOL%/*}"
-        [[ -n "$ZFS_POOL" ]] || die "Could not determine ZFS pool"
+        ZFS_POOL=$(storage_zfs_pool "$TARGET_STORAGE") || die "Could not determine ZFS pool for $TARGET_STORAGE"
         
         ZFS_PATH="${ZFS_POOL}/${TARGET_VOLUME}"
         
@@ -615,17 +620,8 @@ case "$TARGET_STORAGE_TYPE" in
         ;;
     
     dir|nfs|cifs|glusterfs)
-        # Directory-based storage
-        TARGET_DIR=$(pvesm path "$TARGET_STORAGE:dummy" 2>/dev/null | xargs dirname)
-        [[ -n "$TARGET_DIR" && -d "$TARGET_DIR" ]] || die "Could not determine target directory"
-        
-        TARGET_PATH="${TARGET_DIR}/${TARGET_VOLUME}"
-        
-        # Determine extension based on format
-        if [[ "$TARGET_FORMAT" == "qcow2" ]]; then
-            TARGET_PATH="${TARGET_PATH}.qcow2"
-        fi
-        
+        # Directory-based storage — TARGET_DIR/TARGET_PATH were resolved
+        # earlier under images/<id>/
         log "Creating disk image: $TARGET_PATH"
         
         # Create/convert image
@@ -675,13 +671,9 @@ if [[ "$TYPE" == "lxc" ]]; then
     NEW_CONFIG=$(pct config "$ID" | grep "^rootfs:")
     log "New config: $NEW_CONFIG"
 else
-    # VM: Replace disk
+    # VM: Replace disk — a single `qm set` swaps the volume atomically;
+    # the old disk becomes 'unused' and stays recoverable.
     log "Updating VM disk $DISK_NAME..."
-    
-    # First, detach old disk (don't delete yet)
-    qm set "$ID" --delete "$DISK_NAME" 2>&1 | tee -a "$LOG_FILE" || warn "Detach may have issues, continuing..."
-    
-    # Attach new disk
     qm set "$ID" --${DISK_NAME} "${TARGET_REF},size=${TARGET_SIZE}G" 2>&1 | tee -a "$LOG_FILE"
     
     # Verify

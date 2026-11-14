@@ -150,6 +150,36 @@ sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm \
 sudo ./lxc-to-vm.sh --batch /etc/conversions/nightly.txt --parallel 8
 ```
 
+### Non-Interactive Mode
+
+All converters and disk tools accept `-y` / `--yes` to auto-answer
+confirmation prompts — required for fully unattended runs:
+
+```bash
+# Unattended batch conversion (overwrites existing target IDs!)
+sudo ./lxc-to-vm.sh --batch nightly.txt --parallel 8 -y
+sudo ./vm-to-lxc.sh -v 200 -c 100 -s local-lvm -y
+
+# Unattended disk operations
+sudo ./shrink-vm.sh -v 100,101,102 -y        # multi-ID batch shrink
+sudo ./expand-lxc.sh -c 100 -a 20 --yes      # (--force is the same flag here)
+sudo ./clone-replace-disk.sh -t vm -i 200 --yes
+```
+
+Automation-relevant semantics:
+
+- `--yes` auto-accepts the target-ID collision check: **existing guests
+  with the target ID are stopped and overwritten without asking.**
+- Missing required values (`-c`, `-v`/`-i`, `-s`) fail validation instead
+  of prompting under `--yes`.
+- `--batch` / `--range` / `--parallel` exit `0` only when **every** item
+  succeeded; any item failure exits `1`, so CI can detect partial failure.
+- `shrink-*.sh` batch mode additionally distinguishes *skipped* (user
+  aborted, exit `10`) from *failed*; per-ID results are printed in the
+  final summary.
+- `--help` / `--version` work without root on every script; all other
+  operations still require root.
+
 ---
 
 ## CI/CD Integration

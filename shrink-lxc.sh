@@ -273,18 +273,14 @@ USAGE
     exit 0
 }
 
-# --- Root Privilege Check ---
-# All container and storage operations require root access
-# pct, pvesm, lvresize, zfs commands all need root privileges
-if [[ "$EUID" -ne 0 ]]; then
-    die "This script must be run as root (try: sudo $0)"
+# ==============================================================================
+# SHARED LIBRARIES
+# ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/lib/common.sh"
 fi
-
-# --- Initialize Log File ---
-# Create log directory if it doesn't exist
-# Add timestamp header for this run to distinguish from previous runs
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "--- shrink-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
 # COMMAND-LINE ARGUMENT PARSING
@@ -316,6 +312,18 @@ while [[ $# -gt 0 ]]; do
         *)               CTIDS+=("$1");      shift ;;   # Positional CTID
     esac
 done
+
+# --- Root Privilege Check ---
+# All container and storage operations require root access
+# pct, pvesm, lvresize, zfs commands all need root privileges
+# Parsed arguments first so --help/--version work unprivileged.
+if [[ "$EUID" -ne 0 ]]; then
+    die "This script must be run as root (try: sudo $0)"
+fi
+
+# --- Initialize Log File ---
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "--- shrink-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
 # --- Display Header ---
 # Show the script version and purpose clearly to the user
@@ -459,8 +467,7 @@ if [[ "$CT_STATUS" == "running" ]]; then
         warn "Container $CTID is running. Would stop it."
     else
         warn "Container $CTID is running. Stopping..."
-        pct stop "$CTID"
-        sleep 2  # Brief pause for clean shutdown
+        stop_guest_gracefully ct "$CTID" 60
     fi
 fi
 
@@ -473,8 +480,13 @@ fi
 
 log "Mounting container to calculate used space..."
 
-if ! $DRY_RUN; then
-    pct mount "$CTID"
+# Mount the rootfs even in dry-run mode — pct mount is non-destructive and
+# gives far more accurate numbers than the pct df fallback.
+CT_MOUNTED=false
+if pct mount "$CTID" >>"$LOG_FILE" 2>&1; then
+    CT_MOUNTED=true
+else
+    warn "pct mount failed for CT $CTID."
 fi
 
 # Find the rootfs mount path
@@ -488,29 +500,28 @@ for candidate in "/var/lib/lxc/${CTID}/rootfs" "/var/lib/lxc/${CTID}/rootfs/"; d
     fi
 done
 
-# In dry-run mode, we may not have a mount point if container wasn't running
-# Fall back to pct df which reports usage without needing to mount
-if $DRY_RUN && [[ -z "$LXC_ROOT_MOUNT" ]]; then
-    USED_BYTES=$(pct df "$CTID" 2>/dev/null | awk '/^rootfs/{print $3}' || echo "0")
-    # pct df reports in bytes (exact format varies by Proxmox version)
-    if [[ "$USED_BYTES" -gt 0 ]]; then
-        USED_MB=$((USED_BYTES / 1024 / 1024))
-    else
-        die "Cannot determine used space in dry-run mode. Run without --dry-run."
-    fi
-else
-    [[ -n "$LXC_ROOT_MOUNT" ]] || die "Could not locate rootfs for container $CTID."
-
-    # Calculate used space using du (disk usage)
-    # We exclude virtual filesystems that don't represent actual disk usage:
-    #   - dev/*: device files (created dynamically by kernel)
-    #   - proc/*: process info (virtual filesystem)
-    #   - sys/*: sysfs (kernel interface)
-    #   - tmp/*, run/*: temporary data (shouldn't be preserved)
-    USED_BYTES=$(du -sb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
+if [[ -n "$LXC_ROOT_MOUNT" ]]; then
+    # Calculate used space with du.
+    #   -x : stay on the rootfs filesystem so bind mounts (mp0/mp1/...) and
+    #        pseudo filesystems are NOT counted toward usage
+    #   --exclude: skip virtual/temporary content that isn't real usage:
+    #        dev/* (device files), proc/*, sys/* (kernel interfaces),
+    #        tmp/*, run/* (transient data)
+    USED_BYTES=$(du -sxb --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' \
         --exclude='tmp/*' --exclude='run/*' \
         "${LXC_ROOT_MOUNT}/" 2>/dev/null | awk '{print $1}')
     USED_MB=$(( ${USED_BYTES:-0} / 1024 / 1024 ))
+elif $DRY_RUN; then
+    # Dry-run fallback: pct df reports usage without a mount
+    USED_BYTES=$(pct df "$CTID" 2>/dev/null | awk '/^rootfs/{print $3}' || echo "0")
+    # pct df reports in bytes (exact format varies by Proxmox version)
+    if [[ "${USED_BYTES:-0}" -gt 0 ]]; then
+        USED_MB=$((USED_BYTES / 1024 / 1024))
+    else
+        die "Cannot determine used space for container $CTID. Run without --dry-run."
+    fi
+else
+    die "Could not locate rootfs for container $CTID."
 fi
 
 # Convert MB to GB, rounding up (ceiling division)
@@ -546,7 +557,7 @@ log "Metadata margin: ${META_MARGIN_GB}GB (for journal, inodes, superblocks)"
 log "Current disk: ${CURRENT_SIZE_GB}GB → Target: ${NEW_SIZE_GB}GB (data ${USED_GB}GB + metadata ${META_MARGIN_GB}GB + headroom ${HEADROOM_GB}GB)"
 
 # Unmount container before proceeding with actual shrink operations
-if ! $DRY_RUN; then
+if $CT_MOUNTED; then
     pct unmount "$CTID" 2>/dev/null || true
 fi
 

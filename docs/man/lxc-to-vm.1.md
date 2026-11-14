@@ -5,7 +5,7 @@
      License: MIT
      ============================================================================== -->
 <!-- markdownlint-disable MD041 -->
-% LXC-TO-VM(1) lxc-to-vm 6.0.6
+% LXC-TO-VM(1) lxc-to-vm 6.2.1
 
 # NAME
 
@@ -129,6 +129,12 @@ and remote cluster migration.
 
 **--no-auto-fix**
 : Disable automatic remediation when health checks detect known issues.
+
+**-y, --yes**
+: Non-interactive mode: auto-accept confirmation prompts, including the
+  target-ID collision check (existing guests are overwritten). Missing
+  required values fail validation instead of prompting. Batch and range
+  modes exit non-zero if any item fails.
 
 **-h, --help**
 : Show help and exit.

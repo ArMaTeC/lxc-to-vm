@@ -52,6 +52,7 @@ sudo ./expand-vm.sh -v 100 -a 20 --dry-run
 | | `--hot-expand` | Attempt online expansion (VM stays running) | — |
 | | `--no-restart` | Keep VM stopped after expansion | — |
 | | `--force` | Skip confirmation prompts | — |
+| `-y` | `--yes` | Same as `--force` (non-interactive) | — |
 | `-h` | `--help` | Show help message | — |
 | `-V` | `--version` | Print version | — |
 
@@ -96,7 +97,7 @@ sudo ./expand-vm.sh -v 100 --max --safety-margin 20
 
 ## Hot-Expand (VM Stays Running)
 
-Use `--hot-expand` to expand the disk while the VM is running. The script expands the underlying storage and notifies the VM via the QEMU monitor (`block_resize`). After the disk is expanded, you must resize the filesystem **inside** the VM:
+Use `--hot-expand` to expand the disk while the VM is running. The script expands the underlying storage and performs a native online resize via `qm resize` (volume + config + guest notification). After the disk is expanded, you must resize the filesystem **inside** the VM:
 
 ```bash
 sudo ./expand-vm.sh -v 100 -s 200 --hot-expand

@@ -41,10 +41,10 @@ standardized `### Function: <name>` header comment.
 | `clone-replace-disk.sh` | 12 | 12 | 100% |
 | `add-file-headers.sh` | 10 | 9 | 90.0% |
 | `test-remote-pve.sh` | 2 | 2 | 100% |
-| `lib/common.sh` | 1 | 1 | 100% |
+| `lib/common.sh` | 11 | 11 | 100% |
 | `lib/os-detect.sh` | 3 | 3 | 100% |
 | `lib/windows-disk.sh` | 6 | 6 | 100% |
-| **Total** | **187** | **139** | **74.3%** |
+| **Total** | **197** | **149** | **75.6%** |
 
 ### Notes on Coverage
 

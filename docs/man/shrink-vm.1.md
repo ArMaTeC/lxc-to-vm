@@ -5,7 +5,7 @@
      License: MIT
      ============================================================================== -->
 <!-- markdownlint-disable MD041 -->
-% SHRINK-VM(1) lxc-to-vm 6.0.6
+% SHRINK-VM(1) lxc-to-vm 6.2.1
 
 # NAME
 
@@ -49,6 +49,10 @@ handles Linux guests with `resize2fs`/`e2fsck` and Windows guests via
 : Non-interactive mode: auto-accept confirmations. Issues requiring
   attention are still reported and abort that VM; in batch mode processing
   continues with the next ID.
+
+**-t, --temp-dir** *PATH*
+: Directory for temporary raw images during qcow2/libguestfs shrinks
+  (default: `/var/tmp`). Needs free space >= the disk's virtual size.
 
 **-h, --help**
 : Show help and exit.

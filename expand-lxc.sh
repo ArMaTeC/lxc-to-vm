@@ -208,8 +208,9 @@ OPTIONS:
   -n, --dry-run          Show what would be done without making changes
   --safety-margin <GB>   GB to reserve when using --max (default: ${POOL_SAFETY_MARGIN_GB})
   --safety-percent <N>     Percent of pool to reserve when using --max (default: ${POOL_SAFETY_MARGIN_PCT})
-  --no-restart           Keep container running (hot-expand where supported)
+  --no-restart           Keep container running (online resize where supported)
   --force                Skip confirmation prompts
+  -y, --yes              Same as --force (non-interactive)
   -h, --help             Show this help message
   -V, --version          Show version
 
@@ -240,14 +241,14 @@ USAGE
     exit 0
 }
 
-# --- Root Privilege Check ---
-if [[ "$EUID" -ne 0 ]]; then
-    die "This script must be run as root (try: sudo $0)"
+# ==============================================================================
+# SHARED LIBRARIES
+# ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/lib/common.sh"
 fi
-
-# --- Initialize Log File ---
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "--- expand-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
 # ==============================================================================
 # COMMAND-LINE ARGUMENT PARSING
@@ -302,7 +303,7 @@ while [[ $# -gt 0 ]]; do
             NO_RESTART=true
             shift
             ;;
-        --force)
+        --force|-y|--yes)
             FORCE=true
             shift
             ;;
@@ -318,6 +319,16 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# --- Root Privilege Check ---
+# Parsed arguments first so --help/--version work unprivileged.
+if [[ "$EUID" -ne 0 ]]; then
+    die "This script must be run as root (try: sudo $0)"
+fi
+
+# --- Initialize Log File ---
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "--- expand-lxc run: $(date -Is) ---" >> "$LOG_FILE"
 
 # --- Display Header ---
 e "${BOLD}========================================${NC}"
@@ -541,35 +552,37 @@ if $DRY_RUN; then
     e "  ${BOLD}Mode:${NC}         $EXPAND_MODE"
     echo ""
     e "  ${BOLD}Steps that would be performed:${NC}"
-    
-    if $CT_WAS_RUNNING && ! $NO_RESTART; then
-        echo "    1. Stop container $CTID"
+
+    step=1
+    if $CT_WAS_RUNNING && $NO_RESTART; then
+        echo "    ${step}. Expand rootfs online via 'pct resize' to ${NEW_SIZE_GB}GB"
+        step=$((step + 1))
     else
-        echo "    1. No restart required (hot-expand mode)"
+        if $CT_WAS_RUNNING; then
+            echo "    ${step}. Stop container $CTID"
+            step=$((step + 1))
+        fi
+        case "$STORAGE_TYPE" in
+            lvmthin|lvm)
+                echo "    ${step}. Expand LV with lvresize to ${NEW_SIZE_GB}GB"; step=$((step + 1))
+                echo "    ${step}. Expand filesystem with resize2fs"; step=$((step + 1))
+                ;;
+            dir|nfs|cifs|glusterfs)
+                echo "    ${step}. Expand disk image with qemu-img"; step=$((step + 1))
+                echo "    ${step}. Expand filesystem with resize2fs"; step=$((step + 1))
+                ;;
+            zfspool)
+                echo "    ${step}. Expand ZFS volume to ${NEW_SIZE_GB}GB"; step=$((step + 1))
+                echo "    ${step}. Expand filesystem with resize2fs"; step=$((step + 1))
+                ;;
+        esac
+        echo "    ${step}. Update container config"; step=$((step + 1))
+        if $CT_WAS_RUNNING; then
+            echo "    ${step}. Restart container"; step=$((step + 1))
+        fi
     fi
-    
-    case "$STORAGE_TYPE" in
-        lvmthin|lvm)
-            echo "    2. Expand LV with lvresize to ${NEW_SIZE_GB}GB"
-            echo "    3. Expand filesystem with resize2fs"
-            ;;
-        dir|nfs|cifs|glusterfs)
-            echo "    2. Expand disk image with qemu-img"
-            echo "    3. Expand filesystem with resize2fs"
-            ;;
-        zfspool)
-            echo "    2. Expand ZFS volume to ${NEW_SIZE_GB}GB"
-            echo "    3. Expand filesystem with resize2fs"
-            ;;
-    esac
-    
-    echo "    4. Update container config"
-    
-    if $CT_WAS_RUNNING && ! $NO_RESTART; then
-        echo "    5. Restart container"
-    fi
-    
-    echo "    5. Verify filesystem integrity"
+
+    echo "    ${step}. Verify filesystem integrity"
     echo ""
     ok "Dry run complete. Remove --dry-run to execute."
     exit 0
@@ -595,10 +608,19 @@ fi
 # Stop container if needed (and not in hot-expand mode)
 if $CT_WAS_RUNNING && ! $NO_RESTART; then
     log "Stopping container $CTID..."
-    pct stop "$CTID"
-    sleep 2
+    stop_guest_gracefully ct "$CTID" 60
 fi
 
+if $CT_WAS_RUNNING && $NO_RESTART; then
+    # Online resize via pct: expands the volume and grows the filesystem
+    # inside the running container where the storage supports it.
+    ${hot_expand_supported:-false} || die "Online resize is not supported for $STORAGE_TYPE. Stop the container, or drop --no-restart."
+    log "Expanding rootfs online via 'pct resize'..."
+    if ! pct resize "$CTID" rootfs "${NEW_SIZE_GB}G" 2>&1 | tee -a "$LOG_FILE"; then
+        die "Online resize failed. Stop the container and retry without --no-restart."
+    fi
+    ok "Rootfs resized online."
+else
 case "$STORAGE_TYPE" in
 
     # --------------------------------------------------------------------------
@@ -751,6 +773,7 @@ case "$STORAGE_TYPE" in
         die "Unsupported storage type: '$STORAGE_TYPE'. Supported: lvmthin, lvm, dir, nfs, zfspool."
         ;;
 esac
+fi
 
 # ==============================================================================
 # RESTART & SUMMARY
