@@ -21,20 +21,25 @@ Automated remote Proxmox VE test helper for validating LXC-to-VM conversions.
 
 ## Configuration
 
-Edit the variables at the top of the script before running:
+All values are set via environment variables (or the defaults at the top of
+the script). **Never hardcode credentials in the script** — it uses SSH key
+auth when available and only falls back to `sshpass -e` when `PVE_PASS` is
+set (the password is passed through the environment, not the command line).
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PVE_IP` | `192.168.1.29` | IP address of the remote Proxmox host |
 | `PVE_USER` | `root` | SSH username |
-| `PVE_PASS` | `REMOVED_CREDENTIAL` | SSH password |
+| `PVE_PASS` | *(unset)* | SSH password — optional; prefer SSH keys |
 | `CT126_ID` | `126` | Source LXC container ID (first test) |
 | `CT127_ID` | `127` | Source LXC container ID (second test) |
 | `VM260_ID` | `260` | Target VM ID (first test) |
 | `VM261_ID` | `261` | Target VM ID (second test) |
 | `STORAGE` | `local-lvm` | Target storage pool |
 
-> **Security Note**: Hardcoded credentials are for test environments only. For production use, configure SSH key-based authentication and remove the password.
+> **Security Note**: The script is gitignored and never committed. Prefer SSH
+> key-based authentication (`ssh-copy-id root@<host>`); export `PVE_PASS`
+> only for throwaway test environments.
 
 ## Usage
 
