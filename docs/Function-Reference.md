@@ -36,7 +36,7 @@ appearance in the file.
 
 | | |
 | --- | --- |
-| **Signature** | `check_target_collision <vm|ct> <target_id> [replace_flag]` |
+| **Signature** | `check_target_collision <vm | ct> <target_id> [replace_flag]` |
 | **Purpose** | Guard against destroying an existing guest with the target ID. Prompts for confirmation unless a `replace-*` flag or `ASSUME_YES=true` (`--yes`) is set. |
 | **Returns** | `0` if it is safe to continue; exits `1` otherwise. |
 
@@ -79,7 +79,7 @@ appearance in the file.
 
 | | |
 | --- | --- |
-| **Signature** | `stop_guest_gracefully <vm|ct|lxc> <id> [timeout_s]` |
+| **Signature** | `stop_guest_gracefully <vm | ct | lxc> <id> [timeout_s]` |
 | **Purpose** | Request a graceful shutdown (`qm shutdown`/`pct shutdown`), poll until stopped, and force a hard stop after the timeout (default 60s). |
 
 ---
