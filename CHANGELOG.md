@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`lxc-to-vm.sh`**: converting an unprivileged container stripped the
+  setuid/setgid bits and file capabilities from every remapped file, because
+  `chown()` clears them — after conversion `sudo` failed with "sudo must be
+  owned by uid 0 and have the setuid bit set" (likewise `su`, `passwd`,
+  `mount`, `ping`, ...). Ownership normalization now restores the original
+  mode and capabilities, mapping container-scoped (v3) capabilities to the
+  VM's root
 - **`shrink-lxc.sh`**: a container whose filesystem minimum (`resize2fs -P`)
   was at or above the current disk size failed with "lvresize failed" in
   batch runs — the adjusted target is now re-checked and the run exits
