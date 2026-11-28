@@ -2563,8 +2563,11 @@ rsync -axHAX --info=progress2 --no-inc-recursive \
 if $NEED_UID_GID_NORMALIZATION; then
     command -v python3 >/dev/null 2>&1 || die "python3 is required to normalize unprivileged CT ownership mappings."
     log "Normalizing shifted UID/GID ownership in copied filesystem..."
-    python3 - "$MOUNT_POINT" "$UID_SHIFT_BASE" "$UID_SHIFT_COUNT" "$GID_SHIFT_BASE" "$GID_SHIFT_COUNT" >> "$LOG_FILE" 2>&1 <<'PY'
+    if ! python3 - "$MOUNT_POINT" "$UID_SHIFT_BASE" "$UID_SHIFT_COUNT" "$GID_SHIFT_BASE" "$GID_SHIFT_COUNT" >> "$LOG_FILE" 2>&1 <<'PY'
+import errno
 import os
+import stat
+import struct
 import sys
 
 root = sys.argv[1]
@@ -2576,23 +2579,78 @@ gid_count = int(sys.argv[5])
 uid_end = uid_base + uid_count
 gid_end = gid_base + gid_count
 
+# chown() clears the setuid/setgid bits and file capabilities of regular files
+# (sudo, su, passwd, ping, ...), so both are captured before remapping and
+# restored afterwards.
+SETID_BITS = stat.S_ISUID | stat.S_ISGID
+CAPS_XATTR = "security.capability"
+VFS_CAP_REVISION_MASK = 0xFF000000
+VFS_CAP_REVISION_2 = 0x02000000
+VFS_CAP_REVISION_3 = 0x03000000
+VFS_CAP_V2_SIZE = 20
+VFS_CAP_V3_SIZE = 24
+
 changed = 0
+setid_restored = 0
+caps_restored = 0
 errors = 0
+seen_inodes = set()
 
 def remap(value, base, end):
     if base <= value < end:
         return value - base
     return value
 
+def read_caps(path):
+    try:
+        return os.getxattr(path, CAPS_XATTR)
+    except OSError as exc:
+        if exc.errno in (errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP):
+            return None
+        raise
+
+def remap_caps(caps):
+    # Capabilities set inside an unprivileged CT are stored as v3 entries whose
+    # rootid is the CT's root on the host (e.g. 100000). The VM kernel ignores
+    # those, so map rootid back; a root of 0 becomes a plain v2 entry.
+    if len(caps) != VFS_CAP_V3_SIZE:
+        return caps
+    magic = struct.unpack_from("<I", caps)[0]
+    if magic & VFS_CAP_REVISION_MASK != VFS_CAP_REVISION_3:
+        return caps
+    rootid = struct.unpack_from("<I", caps, VFS_CAP_V2_SIZE)[0]
+    new_rootid = remap(rootid, uid_base, uid_end)
+    if new_rootid == rootid:
+        return caps
+    if new_rootid == 0:
+        flags = magic & ~VFS_CAP_REVISION_MASK
+        return struct.pack("<I", VFS_CAP_REVISION_2 | flags) + caps[4:VFS_CAP_V2_SIZE]
+    return caps[:VFS_CAP_V2_SIZE] + struct.pack("<I", new_rootid)
+
 def process_path(path):
-    global changed, errors
+    global changed, setid_restored, caps_restored, errors
     try:
         st = os.lstat(path)
+        inode = (st.st_dev, st.st_ino)
+        if inode in seen_inodes:
+            return
         new_uid = remap(st.st_uid, uid_base, uid_end)
         new_gid = remap(st.st_gid, gid_base, gid_end)
-        if new_uid != st.st_uid or new_gid != st.st_gid:
+        owner_changed = new_uid != st.st_uid or new_gid != st.st_gid
+        is_file = stat.S_ISREG(st.st_mode)
+        caps = read_caps(path) if is_file else None
+        if owner_changed:
             os.lchown(path, new_uid, new_gid)
             changed += 1
+            if is_file and st.st_mode & SETID_BITS:
+                os.chmod(path, stat.S_IMODE(st.st_mode))
+                setid_restored += 1
+        if caps is not None:
+            new_caps = remap_caps(caps)
+            if owner_changed or new_caps != caps:
+                os.setxattr(path, CAPS_XATTR, new_caps)
+                caps_restored += 1
+        seen_inodes.add(inode)
     except Exception as exc:
         errors += 1
         if errors <= 20:
@@ -2605,10 +2663,14 @@ for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=Fals
     for name in filenames:
         process_path(os.path.join(dirpath, name))
 
-print(f"ownership remap changed={changed} errors={errors}")
+print(f"ownership remap changed={changed} setid_restored={setid_restored} caps_restored={caps_restored} errors={errors}")
 if errors > 0:
     sys.exit(1)
 PY
+    then
+        err "Ownership normalization failed; see $LOG_FILE."
+        return 1
+    fi
     ok "Ownership normalization complete."
 fi
 

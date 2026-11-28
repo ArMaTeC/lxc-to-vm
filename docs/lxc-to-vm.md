@@ -298,6 +298,8 @@ sudo ./lxc-to-vm.sh --wizard
 5. **Data Copy**
    - Use `rsync` for efficient file transfer
    - Preserve permissions and ownership
+   - Shift unprivileged container IDs back (e.g. `100000` → `0`), keeping
+     setuid/setgid bits and file capabilities
    - Handle special files and symlinks
    - Progress reporting
 
