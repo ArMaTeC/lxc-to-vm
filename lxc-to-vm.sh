@@ -2563,7 +2563,7 @@ rsync -axHAX --info=progress2 --no-inc-recursive \
 if $NEED_UID_GID_NORMALIZATION; then
     command -v python3 >/dev/null 2>&1 || die "python3 is required to normalize unprivileged CT ownership mappings."
     log "Normalizing shifted UID/GID ownership in copied filesystem..."
-    python3 - "$MOUNT_POINT" "$UID_SHIFT_BASE" "$UID_SHIFT_COUNT" "$GID_SHIFT_BASE" "$GID_SHIFT_COUNT" >> "$LOG_FILE" 2>&1 <<'PY'
+    if ! python3 - "$MOUNT_POINT" "$UID_SHIFT_BASE" "$UID_SHIFT_COUNT" "$GID_SHIFT_BASE" "$GID_SHIFT_COUNT" >> "$LOG_FILE" 2>&1 <<'PY'
 import errno
 import os
 import stat
@@ -2594,6 +2594,7 @@ changed = 0
 setid_restored = 0
 caps_restored = 0
 errors = 0
+seen_inodes = set()
 
 def remap(value, base, end):
     if base <= value < end:
@@ -2630,6 +2631,9 @@ def process_path(path):
     global changed, setid_restored, caps_restored, errors
     try:
         st = os.lstat(path)
+        inode = (st.st_dev, st.st_ino)
+        if inode in seen_inodes:
+            return
         new_uid = remap(st.st_uid, uid_base, uid_end)
         new_gid = remap(st.st_gid, gid_base, gid_end)
         owner_changed = new_uid != st.st_uid or new_gid != st.st_gid
@@ -2646,6 +2650,7 @@ def process_path(path):
             if owner_changed or new_caps != caps:
                 os.setxattr(path, CAPS_XATTR, new_caps)
                 caps_restored += 1
+        seen_inodes.add(inode)
     except Exception as exc:
         errors += 1
         if errors <= 20:
@@ -2662,6 +2667,10 @@ print(f"ownership remap changed={changed} setid_restored={setid_restored} caps_r
 if errors > 0:
     sys.exit(1)
 PY
+    then
+        err "Ownership normalization failed; see $LOG_FILE."
+        return 1
+    fi
     ok "Ownership normalization complete."
 fi
 

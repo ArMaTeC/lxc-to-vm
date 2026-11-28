@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `chown()` clears them — after conversion `sudo` failed with "sudo must be
   owned by uid 0 and have the setuid bit set" (likewise `su`, `passwd`,
   `mount`, `ping`, ...). Ownership normalization now restores the original
-  mode and capabilities, mapping container-scoped (v3) capabilities to the
-  VM's root
+  mode and capabilities, maps container-scoped (v3) capability root IDs,
+  processes hardlinked files once, and aborts conversion if normalization
+  reports an error
 - **`shrink-lxc.sh`**: a container whose filesystem minimum (`resize2fs -P`)
   was at or above the current disk size failed with "lvresize failed" in
   batch runs — the adjusted target is now re-checked and the run exits
